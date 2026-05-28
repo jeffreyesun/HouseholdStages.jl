@@ -1,9 +1,9 @@
 name = "HouseholdStages"
 uuid = "0c98d319-5992-4fdc-b5ff-08915dacd05b"
-version = "0.2.0"
+version = "0.1.0"
 authors = ["Jeffrey Sun <jeffreyesun@gmail.com>"]
 description = "Composable stages for the household layer of heterogeneous-agent macro models, with categorical foundations, V/Λ duality, and forward/reverse-mode AD."
-# repository = ""    # placeholder for future standalone repo
+repository = "https://github.com/jeffreyesun/HouseholdStages.jl.git"
 
 [deps]
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
