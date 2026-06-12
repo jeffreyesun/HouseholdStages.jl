@@ -3,7 +3,7 @@ using HouseholdStages
 using ForwardDiff: ForwardDiff, Dual
 
 @testset "UtilityStage — backward adds u(s) to V_end" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
         StateAxis(:income, [0.5, 1.0]),
     )
@@ -22,7 +22,7 @@ using ForwardDiff: ForwardDiff, Dual
 end
 
 @testset "UtilityStage — backward composes additively with V_end" begin
-    layout = StateLayout(StateAxis(:z, [1, 2, 3]))
+    layout = GriddedLayout(StateAxis(:z, [1, 2, 3]))
     u = (cell; env) -> Float64(cell.z)
     stage = UtilityStage(layout; utility = u)
 
@@ -32,7 +32,7 @@ end
 end
 
 @testset "UtilityStage — forward is identity on Λ" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:w, continuous_grid([0.0, 0.5, 1.0])),
         StateAxis(:z, [:a, :b]),
     )
@@ -48,7 +48,7 @@ end
 @testset "UtilityStage — duality identity (with flow payoff r = u)" begin
     # ⟨V_in, Λ_in⟩ = ⟨V_out, Λ_out⟩ + ⟨r, Λ_in⟩
     # With Λ_out = Λ_in and r = u, this reduces to V_in = V_out + u.
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:income, [0.5, 1.0, 1.5]),
     )
@@ -68,7 +68,7 @@ end
 end
 
 @testset "UtilityStage — effective_env_slice is empty (no introspection)" begin
-    layout = StateLayout(StateAxis(:z, [1, 2]))
+    layout = GriddedLayout(StateAxis(:z, [1, 2]))
     u = (cell; env) -> env.σ * cell.z
     stage = UtilityStage(layout; utility = u)
     @test effective_env_slice(stage) == ()
@@ -79,8 +79,8 @@ end
 
 @testset "UtilityStage — composition with MarkovStage" begin
     P = [0.7 0.3; 0.3 0.7]
-    layout = StateLayout(StateAxis(:z, [0.5, 1.5]))
-    markov = MarkovStage(layout; axis = :z, transition = P)
+    layout = GriddedLayout(StateAxis(:z, [0.5, 1.5]))
+    markov = MarkovStage(layout; axis = :z, transition_matrix = P)
     util   = UtilityStage(layout; utility = (cell; env) -> cell.z)
 
     chain = markov ∘ util
@@ -90,14 +90,14 @@ end
 end
 
 @testset "UtilityStage — Dual-typed buffer rebuild for AD" begin
-    layout = StateLayout(StateAxis(:z, [1, 2, 3]))
+    layout = GriddedLayout(StateAxis(:z, [1, 2, 3]))
     u = (cell; env) -> Float64(cell.z) * env.a
     stage = UtilityStage(layout; utility = u)
 
     DualT = ForwardDiff.Dual{Nothing, Float64, 1}
     stage_dual = with_eltype(stage, DualT)
-    @test eltype(stage_dual.buffer.V_start) <: ForwardDiff.Dual
-    @test eltype(stage_dual.buffer.Λ_end)   <: ForwardDiff.Dual
+    @test eltype(stage_dual.scratch.V_start) <: ForwardDiff.Dual
+    @test eltype(stage_dual.scratch.Λ_end)   <: ForwardDiff.Dual
 
     V_end_dual = zeros(DualT, 3)
     env_dual   = (a = DualT(2.0, ForwardDiff.Partials((1.0,))),)

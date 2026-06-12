@@ -59,13 +59,13 @@ Base.Broadcast.broadcastable(p::AiyagariParams) = Ref(p)
 u_crra(c, σ) = c < 0 ? -Inf : (σ == 1 ? log(c) : (c^(1 - σ)) / (1 - σ))
 
 function aiyagari_household(p = AiyagariParams())
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid(0.0, p.w_max;
                                            length = p.N_w, spacing = :log)),
         StateAxis(:income, p.y_grid),
     )
 
-    shock   = MarkovStage(layout; axis = :income, transition = p.P_y)
+    shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(layout;
         wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
         wealth_axis = :wealth,
@@ -130,7 +130,7 @@ bundled `<X>Stage` form is exported.
 
 ### Exogenous transitions
 
-- **`MarkovStage(layout; axis, transition)`** — Markov draw along a
+- **`MarkovStage(layout; axis, transition_matrix)`** — Markov draw along a
   named axis. K is the transition matrix itself, V/θ-independent;
   kernel = `nothing`.
 
@@ -138,16 +138,18 @@ bundled `<X>Stage` form is exported.
 
 - **`ArgmaxStage(layout; choice_axis, flow_payoff, next_state_idx)`** —
   hard choice. K is a sparse permutation; kernel = integer policy.
-- **`LogitChoiceStage(layout; choice_axis, flow_payoff, next_state_idx, ε)`** —
-  Gumbel-smoothed choice. K is a stochastic kernel; kernel = action
-  probability tensor.
-- **`MigrationStage(layout; location_axis, migration_cost, amenity, ε)`** —
-  dedicated cost-matrix logit on a location-style categorical axis.
-  `migration_cost::Matrix` is `(n_loc, n_loc)`, `migration_cost[i, j]`
-  is the cost of moving `i → j`. Optional `amenity` adds a
-  destination-utility shifter: `nothing`, a static `Vector` of length
-  `n_loc`, or a `(destination; env) -> Real` closure
-  (env-dependent, materialised every backward pass).
+- **`LogitChoiceStage(layout; choice_axis, cost_matrix, ε)`** —
+  Gumbel-smoothed choice over the choice axis, with an origin→destination
+  `cost_matrix[i, j]`. K is a stochastic kernel; kernel = action
+  probability tensor. A destination payoff (state-dependent or a static
+  amenity shifter) is V-additive, so it composes in as a `UtilityStage`
+  before the logit (`LogitChoiceStage ∘ UtilityStage(u)`), or use
+  `LogitUtilityStage` for the packaged composition.
+- **`MigrationStage(layout; location_axis, migration_cost, ε)`** —
+  cost-matrix logit on a location-style categorical axis.
+  `migration_cost` is `(n_loc, n_loc)` (a `Matrix` or `FromEnv(:C)`),
+  `migration_cost[i, j]` the cost of moving `i → j`. A destination
+  amenity is a `UtilityStage` composed before the move.
 
 ### Wealth dynamics
 
@@ -394,10 +396,14 @@ decomposition expresses the same algebraic split in a non-stage-shaped
 - **`examples/`** — four worked examples; the Aiyagari one is the
   smallest entry point. `examples/notebooks/` has Pluto-style
   walkthroughs.
-- **`bench/runbenchmarks.jl`** — per-stage and chain benchmarks
-  against hand-coded reference kernels; results in `bench/results.md`.
-  At `N_w = 400` the chain backward+forward sits at ~1.1×–1.2× the
-  reference.
+- **`bench/`** — benchmarks against the *actual* `example_stages`
+  reference (`reference_comparison*.jl`: per-stage, plus a full
+  hand-chained-reference comparison). The full chain backward sits at
+  ~1.3× the reference; per stage 1.0–3.5× (the argmax / interpolation /
+  matmul cores are at parity, the residuals on cheap stages are
+  cross-cutting bookkeeping — see `OPTIMIZATION_OPPORTUNITIES.md`).
+  `runbenchmarks.jl` / `results.md` hold the older comparison against
+  same-shape kernels — see the correction banner in `results.md`.
 
 ## License
 

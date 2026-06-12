@@ -7,16 +7,16 @@ using HouseholdStages
 # steady-state inner solves are sub-second.
 
 function _tiny_aiyagari_layout(; N_w::Int = 20)
-    return StateLayout(
+    return GriddedLayout(
         StateAxis(:wealth, continuous_grid(0.0, 30.0; length = N_w, spacing = :log)),
         StateAxis(:income, [0.6, 1.4]),
     )
 end
 
-function _tiny_aiyagari_household(layout::StateLayout;
+function _tiny_aiyagari_household(layout::GriddedLayout;
                                   β::Float64 = 0.96, σ::Float64 = 1.5)
     P_y = [0.7 0.3; 0.3 0.7]
-    income_shock = MarkovStage(layout; axis = :income, transition = P_y)
+    income_shock = MarkovStage(layout; axis = :income, transition_matrix = P_y)
     income_receipt = WealthChangeStage(layout;
         wealth_post  = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
         wealth_axis  = :wealth,

@@ -3,7 +3,7 @@ using HouseholdStages
 
 # Small two-location layout used across the tests.
 function _two_loc_layout(; n_w = 3, n_loc = 2)
-    return StateLayout(
+    return GriddedLayout(
         StateAxis(:wealth,   continuous_grid(collect(range(0.0, 1.0; length = n_w)))),
         StateAxis(:location, categorical(n_loc == 2 ? [:home, :abroad] :
                                           n_loc == 3 ? [:a, :b, :c] :
@@ -11,12 +11,27 @@ function _two_loc_layout(; n_w = 3, n_loc = 2)
     )
 end
 
-@testset "MigrationStage — constructor: cost matrix shape check" begin
+# Recompute the (origin → destination) choice-probability tensor from a
+# solved stage's kernel, replacing the removed `transition_choice_prob`.
+# eψC's compact parent is (origin, dest); value_weight/normalizer are full
+# layout-shaped, so for these `(wealth, location)` layouts they index as
+# `[wealth, location]`:  P(w, i → j) = eψC[i,j] · value_weight[w,j] / normalizer[w,i].
+function _choice_prob(stage, n_w, n_l)
+    k  = stage.kernel
+    eC = reshape(parent(k.eψC), n_l, n_l)
+    return [eC[i, j] * k.value_weight[w_i, j] / k.normalizer[w_i, i]
+            for w_i in 1:n_w, i in 1:n_l, j in 1:n_l]
+end
+
+@testset "MigrationStage — cost matrix shape check (fires at backward!)" begin
+    # The shape @assert now lives in backward! (the Spec is @kwdef, no body).
     layout = _two_loc_layout()
-    @test_throws AssertionError MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = [0.0 0.5 0.0; 0.5 0.0 0.0],   # wrong shape
-        ε              = 1.0)
+    stage = MigrationStage(layout; location_axis = :location,
+        migration_cost = [0.0 0.5 0.0; 0.5 0.0 0.0], ε = 1.0)   # wrong shape
+    n_w, n_l = axissize.(layout.axes)
+    # A constant cost sizes the dense kernel from its own shape, so a wrong shape now
+    # surfaces at the backward contraction (DimensionMismatch) rather than the fill assertion.
+    @test_throws DimensionMismatch backward!(stage, zeros(n_w, n_l), NamedTuple())
 end
 
 @testset "MigrationStage — backward / forward at finite ε" begin
@@ -45,7 +60,7 @@ end
     end
 
     # Probabilities sum to 1 along the destination axis.
-    prob = stage.buffer.kernel.choice_prob
+    prob = _choice_prob(stage, n_w, n_l)
     for w_i in 1:n_w, i in 1:n_l
         @test sum(prob[w_i, i, j] for j in 1:n_l) ≈ 1.0 atol = 1e-12
     end
@@ -71,7 +86,7 @@ end
     V_end[:, 1] .= 1.0   # home is much more valuable
 
     backward!(stage, V_end, NamedTuple())
-    prob = stage.buffer.kernel.choice_prob
+    prob = _choice_prob(stage, n_w, n_l)
     # From every origin, the policy should concentrate on home (j = 1).
     for w_i in 1:n_w, i in 1:n_l
         @test prob[w_i, i, 1] > 0.999
@@ -102,7 +117,7 @@ end
     # didn't separate the cost. So check the operator identity directly:
     # ⟨V_end, Λ_end⟩ = ⟨V_pre, Λ_start⟩ - ⟨cost · p, Λ_start⟩.
     # Compute the "cost ⋅ p" correction.
-    prob = stage.buffer.kernel.choice_prob
+    prob = _choice_prob(stage, n_w, n_l)
     cost_per_cell = zeros(n_w, n_l)
     for w_i in 1:n_w, i in 1:n_l
         cost_per_cell[w_i, i] = sum(C[i, j] * prob[w_i, i, j] for j in 1:n_l)
@@ -166,21 +181,17 @@ end
     @test sum(Λ_end_chain) ≈ 1.0 atol = 1e-12
 end
 
-@testset "MigrationStage — static amenity vector shifts destinations" begin
-    # Effective utility per (origin, destination) is -C[i,j] + a[j] + V_end[j, s].
-    # Build a case where the cost matrix is symmetric (zero diagonal,
-    # uniform off-diagonal) but the amenity vector tilts strongly
-    # toward destination 2, and verify the closed-form match.
+@testset "MigrationStage — destination amenity is composition with a UtilityStage" begin
+    # A destination amenity a[j] used to be a stage kwarg; it is exactly a
+    # UtilityStage composed before the migration logit (the V-additive
+    # decomposition). Effective utility per (origin, destination) is then
+    # -C[i,j] + a[j] + V_end[j, s], matching the old amenity closed form.
     layout = _two_loc_layout()
     C = [0.0 0.5;
          0.5 0.0]
     a = [0.0, 1.5]                                     # destination 2 gets +1.5
-    stage = MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = C,
-        amenity        = a,
-        ε              = 1.0,
-    )
+    move = MigrationStage(layout; location_axis = :location, migration_cost = C, ε = 1.0)
+    stage = move ∘ UtilityStage(layout; utility = (cell; env) -> a[cell.location == :home ? 1 : 2])
 
     n_w, n_l = axissize.(layout.axes)
     V_end = zeros(n_w, n_l)
@@ -192,89 +203,151 @@ end
         @test V_pre[w_i, i] ≈ expected atol = 1e-12
     end
 
-    # Prob mass should concentrate on destination 2.
-    prob = stage.buffer.kernel.choice_prob
+    # Prob mass should concentrate on destination 2 (the logit sub-stage, modern).
+    k = stage.buffer.stages[1].kernel
+    eC = reshape(parent(k.eψC), n_l, n_l)
+    prob = [eC[i, j] * k.value_weight[w_i, j] / k.normalizer[w_i, i] for w_i in 1:n_w, i in 1:n_l, j in 1:n_l]
     for w_i in 1:n_w, i in 1:n_l
         @test prob[w_i, i, 2] > prob[w_i, i, 1]
     end
 end
 
-@testset "MigrationStage — static amenity vector: shape check" begin
+@testset "MigrationStage — env-dependent cost field via FromEnv (criterion #4)" begin
+    # The migration cost C[origin, destination] is supplied by env (FromEnv(:C)),
+    # so it re-materialises each backward and is part of the env contract (declared
+    # in effective_env_slice) — not a side channel. Changing the
+    # env cost changes the policy; the closed form matches at each env.
     layout = _two_loc_layout()
-    @test_throws AssertionError MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = [0.0 0.5; 0.5 0.0],
-        amenity        = [0.0, 0.0, 0.0],              # wrong length
-        ε              = 1.0,
-    )
-end
-
-@testset "MigrationStage — env-dependent amenity via mutate-in-place" begin
-    # Hold a reference to the amenity vector and mutate it between
-    # solves; backward! reads the current contents on each call.
-    layout = _two_loc_layout()
-    C = [0.0 0.5;
-         0.5 0.0]
-    α = [0.0, 0.0]
-    stage = MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = C,
-        amenity        = α,
-        ε              = 1.0,
-    )
+    stage = MigrationStage(layout; location_axis = :location,
+                           migration_cost = FromEnv(:C), ε = 1.0)
+    @test :C in effective_env_slice(stage)
 
     n_w, n_l = axissize.(layout.axes)
-    V_end = zeros(n_w, n_l)
+    V_end = zeros(n_w, n_l); V_end[:, 2] .= 0.5      # :abroad more valuable
 
-    # Call 1: tilt toward :home.
-    α .= [2.0, 0.0]
-    V_pre_1 = copy(backward!(stage, V_end, NamedTuple()))
-    prob_1  = copy(stage.buffer.kernel.choice_prob)
+    C_cheap = [0.0 0.1; 0.1 0.0]                     # easy to move
+    C_dear  = [0.0 4.0; 4.0 0.0]                     # very costly to move
+
+    V_cheap = copy(backward!(stage, V_end, (C = C_cheap,)))
+    prob_cheap = _choice_prob(stage, n_w, n_l)
+    V_dear  = copy(backward!(stage, V_end, (C = C_dear,)))
+    prob_dear  = _choice_prob(stage, n_w, n_l)
+
+    # Closed form holds at each env cost.
     for w_i in 1:n_w, i in 1:n_l
-        @test prob_1[w_i, i, 1] > prob_1[w_i, i, 2]
-        @test V_pre_1[w_i, i] ≈ log(sum(exp(-C[i, j] + α[j]) for j in 1:n_l)) atol = 1e-12
+        @test V_cheap[w_i, i] ≈ log(sum(exp(-C_cheap[i, j] + V_end[w_i, j]) for j in 1:n_l)) atol = 1e-12
+        @test V_dear[w_i, i]  ≈ log(sum(exp(-C_dear[i, j]  + V_end[w_i, j]) for j in 1:n_l)) atol = 1e-12
     end
 
-    # Call 2: tilt toward :abroad — same Spec, mutated vector.
-    α .= [0.0, 2.0]
-    V_pre_2 = copy(backward!(stage, V_end, NamedTuple()))
-    prob_2  = stage.buffer.kernel.choice_prob
-    for w_i in 1:n_w, i in 1:n_l
-        @test prob_2[w_i, i, 2] > prob_2[w_i, i, 1]
-        @test V_pre_2[w_i, i] ≈ log(sum(exp(-C[i, j] + α[j]) for j in 1:n_l)) atol = 1e-12
-    end
+    # The env-dependent cost genuinely changes the policy: from :home (origin 1),
+    # the high cost suppresses the move to :abroad relative to the cheap case.
+    @test prob_dear[1, 1, 2] < prob_cheap[1, 1, 2]
+    @test !(V_cheap ≈ V_dear)
 
-    # Mass conservation on forward.
+    # Mass conservation on forward, and re-solving at the same env is deterministic.
     Λ_start = fill(1.0 / (n_w * n_l), n_w, n_l)
-    Λ_end   = copy(forward!(stage, Λ_start))
-    @test sum(Λ_end) ≈ sum(Λ_start) atol = 1e-12
+    @test sum(forward!(stage, Λ_start)) ≈ 1.0 atol = 1e-12
+    @test copy(backward!(stage, V_end, (C = C_dear,))) ≈ V_dear
 end
 
-@testset "MigrationStage — default (no amenity) preserves pre-refactor behavior" begin
-    # Spec without an amenity field should be byte-equivalent (in
-    # V_pre / choice_prob) to a Spec with a zero amenity vector — and
-    # both should match the pre-refactor closed form -C[i,j] + V_end[j,s].
+@testset "MigrationStage — env-scalar shifting a base cost (FromEnv mobility)" begin
+    # A complementary env-dependent path: the cost field is formed outside and the
+    # env carries the whole matrix scaled by a mobility scalar. Demonstrates the
+    # FromEnv cost reacting to a low-dimensional aggregate (a mobility cost level).
     layout = _two_loc_layout()
-    C = [0.0 0.5;
-         0.5 0.0]
-    stage_default = MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = C,
-        ε              = 1.0,
-    )
-    stage_zero = MigrationStage(layout;
-        location_axis  = :location,
-        migration_cost = C,
-        amenity        = zeros(2),
-        ε              = 1.0,
-    )
-
+    stage = MigrationStage(layout; location_axis = :location,
+                           migration_cost = FromEnv(:C), ε = 1.0)
     n_w, n_l = axissize.(layout.axes)
-    V_end = [0.1 * w_i + (l_i == 2 ? 0.3 : 0.0)
-             for w_i in 1:n_w, l_i in 1:n_l]
-    V_def  = copy(backward!(stage_default, V_end, NamedTuple()))
-    V_zero = copy(backward!(stage_zero, V_end, NamedTuple()))
-    @test V_def ≈ V_zero atol = 1e-12
+    base = [0.0 1.0; 1.0 0.0]
+    V_end = zeros(n_w, n_l); V_end[:, 2] .= 1.0
+
+    backward!(stage, V_end, (C = 0.2 .* base,))       # low mobility cost
+    p_lo = _choice_prob(stage, n_w, n_l)
+    backward!(stage, V_end, (C = 5.0 .* base,))       # high mobility cost
+    p_hi = _choice_prob(stage, n_w, n_l)
+    # Higher mobility cost ⇒ less moving to the more-valuable :abroad from :home.
+    @test p_hi[1, 1, 2] < p_lo[1, 1, 2]
+end
+
+@testset "MigrationStage — dep-varying cost: renters-only move (flexible cost feature)" begin
+    # The cost varies along a tenure axis: owners pay +Inf to move (immobile),
+    # renters pay Cbase. The cost is stored ONLY over (origin, dest, tenure) —
+    # dep-only storage, never replicated over wealth.
+    layout = GriddedLayout(
+        StateAxis(:wealth,   continuous_grid([0.0, 1.0])),
+        StateAxis(:tenure,   categorical([:rent, :own])),
+        StateAxis(:location, categorical([:home, :abroad])),
+    )
+    Cbase = [0.0 0.4; 0.4 0.0]
+    # C[origin, dest] over :location; varies along :tenure (owners immobile). The choice
+    # axis is the matrix's two positional dims, so only :tenure is a kwarg.
+    migcost(; tenure) = tenure == :own ? [0.0 Inf; Inf 0.0] : Cbase
+    stage = MigrationStage(layout; location_axis = :location, migration_cost = migcost, ε = 1.0)
+    n_w, n_t, n_l = axissize.(layout.axes)
+    V_end = zeros(n_w, n_t, n_l); V_end[:, :, 2] .= 1.0      # :abroad more valuable
+    backward!(stage, V_end, NamedTuple())
+    k = stage.kernel
+
+    # Dep-only storage: eψC's compact parent is (origin, dest, tenure), NOT over wealth.
+    eC = reshape(parent(k.eψC), n_l, n_l, n_t)
+    @test size(eC) == (n_l, n_l, n_t)
+    @test ndims(eC) == 3 && size(eC, 3) == n_t
+
+    # P(j | wealth, tenure, origin). value_weight/normalizer are layout-shaped (wealth, tenure, location).
+    P(w, t, i, j) = eC[i, j, t] * k.value_weight[w, t, j] / k.normalizer[w, t, i]
+
+    # Owners (t = 2) never move; renters (t = 1) do move toward the better location.
+    for w in 1:n_w, i in 1:n_l, j in 1:n_l
+        i != j && @test P(w, 2, i, j) < 1e-12
+    end
+    @test P(1, 2, 1, 1) > 0.999                              # owner stays home
+    @test P(1, 1, 1, 2) > 0.3                                # renter moves home → abroad
+
+    # Mass conservation; closed-form (Gibbs no-leak) for the dep-varying cost.
+    Λ0 = fill(1.0 / (n_w * n_t * n_l), n_w, n_t, n_l)
+    @test sum(forward!(stage, Λ0)) ≈ 1.0 atol = 1e-12
+    C(z, t, i, j) = (t == 2 && i != j) ? Inf : (i == j ? 0.0 : Cbase[i, j])
+    for w in 1:n_w, t in 1:n_t, i in 1:n_l
+        lse = log(sum(exp(-C(w, t, i, j) + V_end[w, t, j]) for j in 1:n_l))
+        @test backward!(stage, V_end, NamedTuple())[w, t, i] ≈ lse atol = 1e-12
+    end
+end
+
+@testset "MigrationStage — dep-varying cost: duality and forward adjoint" begin
+    layout = GriddedLayout(
+        StateAxis(:income,   discrete_finite([0.6, 1.4])),
+        StateAxis(:location, categorical([:home, :abroad])),
+    )
+    # Low-income households are immobile; cost reacts to an env mobility scalar. C[origin,
+    # dest] over :location varies along :income and env, so :income and env are the kwargs.
+    function migcost(; income, env)
+        off = income < 1.0 ? Inf : 0.5 * env.mob
+        return [0.0 off; off 0.0]
+    end
+    stage = MigrationStage(layout; location_axis = :location, migration_cost = migcost, ε = 0.9)
+    n_z, n_l = axissize.(layout.axes)
+    env = (mob = 2.0,)
+
+    V_end   = randn(n_z, n_l)
+    Λ_start = abs.(randn(n_z, n_l)); Λ_start ./= sum(Λ_start)
+    backward!(stage, V_end, env)
+    Λ_end = copy(forward!(stage, Λ_start))
+    k = stage.kernel
+
+    # Linear-K duality ⟨K_lin V_end, Λ_start⟩ = ⟨V_end, Λ_end⟩.
+    eC = reshape(parent(k.eψC), n_l, n_l, n_z)
+    P(z, i, j) = eC[i, j, z] * k.value_weight[z, j] / k.normalizer[z, i]
+    K_lin_V = [sum(P(z, i, j) * V_end[z, j] for j in 1:n_l) for z in 1:n_z, i in 1:n_l]
+    @test sum(K_lin_V .* Λ_start) ≈ sum(V_end .* Λ_end) atol = 1e-12
+
+    # Adjoint dot-product test on forward.
+    dΛ_end   = randn(n_z, n_l)
+    dΛ_start = forward_adjoint!(stage, dΛ_end)
+    @test sum(Λ_end .* dΛ_end) ≈ sum(Λ_start .* dΛ_start) atol = 1e-12
+
+    # The env-mobility scalar genuinely moves the policy.
+    @test !(copy(backward!(stage, V_end, (mob = 0.1,))) ≈
+            copy(backward!(stage, V_end, (mob = 10.0,))))
 end
 
 @testset "MigrationStage — static_env_deps / effective_env_slice" begin

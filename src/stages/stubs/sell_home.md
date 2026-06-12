@@ -1,8 +1,17 @@
 # `SellHome` stub
 
-> Backend gap. Not implemented in `HouseholdStages/` v1. This note
-> captures what the reference implementation does and what the library
-> would need before this stage can be added.
+> **IMPLEMENTED (2026-06-04)** as `SellHomeStage` in
+> `src/stages/sell_home.jl` — the **reference-faithful** route (Triage
+> option 1): a gated wrapper over `ArgmaxStage` on the housing axis.
+> Owners (`h` index ≥ 2) choose keep (own `h`) vs sell (→ renter index
+> 1); renters pass through. The realtor-fee / sale-proceeds wealth
+> change — which the reference itself leaves as a `#TODO` — composes as
+> a following `WealthChangeStage` rather than being fused in. Tests:
+> `test/test_sell_home.jl`. The full fused `ChoiceWithTransition`
+> operator (per-action continuous-axis transition, Option below)
+> remains unbuilt and is the larger task to scope separately.
+>
+> Original note (backend gap, pre-`ArgmaxStage`) follows.
 
 ## What `sell_home` does
 
@@ -33,7 +42,7 @@ Each of the three operations has a primitive in the library:
   axis entirely, but here we want "homeowners map to `h = 1`," which
   is a *partial* collapse depending on the choice outcome.
 
-A naïve split `WealthChangeStage ∘ₛ LogitChoiceStage(:keep_or_sell) ∘ₛ <collapse>`
+A naïve split `WealthChangeStage ∘ LogitChoiceStage(:keep_or_sell) ∘ <collapse>`
 loses the fusion: the wealth change applies *only to sellers* (not to
 non-sellers), so it has to be conditional on the choice. The library
 doesn't currently have a way to make stage (1) conditional on the

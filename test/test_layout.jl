@@ -37,8 +37,8 @@ end
     @test axisvalues(ax2) == [:NYC, :LA]
 end
 
-@testset "layout — StateLayout construction and axis_position" begin
-    layout = StateLayout(
+@testset "layout — GriddedLayout construction and axis_position" begin
+    layout = GriddedLayout(
         StateAxis(:wealth,  continuous_grid(0.0, 100.0; size = 8)),
         StateAxis(:income,  discrete_finite([0.5, 1.0, 1.5])),
         StateAxis(:loc,     categorical([:NYC, :LA])),
@@ -54,14 +54,14 @@ end
 end
 
 @testset "layout — duplicate axis names error" begin
-    @test_throws ErrorException StateLayout(
+    @test_throws ErrorException GriddedLayout(
         StateAxis(:x, continuous_grid(0.0, 1.0; size = 2)),
         StateAxis(:x, discrete_finite([1, 2])),
     )
 end
 
 @testset "layout — cells iteration" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
         StateAxis(:loc,    categorical([:NYC, :LA])),
     )
@@ -84,7 +84,7 @@ end
 
 @testset "layout — cells iteration eltype is concrete NamedTuple per leaf type" begin
     # All-Float64 layout: cell values should be NamedTuple of Floats.
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:a, continuous_grid([0.0, 1.0])),
         StateAxis(:b, discrete_finite([10.0, 20.0])),
     )
@@ -95,7 +95,7 @@ end
 end
 
 @testset "layout — cells iteration is type-stable" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:x, continuous_grid([0.0, 0.5, 1.0])),
         StateAxis(:y, categorical([:A, :B])),
     )

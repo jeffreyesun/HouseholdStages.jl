@@ -18,11 +18,11 @@
 #----------------------#
 
 _buffer_V_start(buffer::AbstractStageBuffer) = buffer.V_start
-_buffer_V_start(buffer::ChainStageBuffer)    = buffer.stages[1].V_start
+_buffer_V_start(buffer::ChainStageBuffer)    = V_start_buffer(buffer.stages[1])
 _buffer_V_start(buffer::ProductStageBuffer)  = buffer.V_fused
 
 _buffer_Λ_end(buffer::AbstractStageBuffer) = buffer.Λ_end
-_buffer_Λ_end(buffer::ChainStageBuffer)    = buffer.stages[end].Λ_end
+_buffer_Λ_end(buffer::ChainStageBuffer)    = Λ_end_buffer(buffer.stages[end])
 _buffer_Λ_end(buffer::ProductStageBuffer)  = buffer.Λ_fused
 
 _buffer_input_layout(buffer::AbstractStageBuffer) = buffer.input_layout
@@ -123,7 +123,7 @@ function solve_transition_given_env_path!(spec::ChainStageSpec,
                                           env_path::AbstractVector;
                                           Λ_0::AbstractArray,
                                           V_T::AbstractArray,
-                                          layout::StateLayout,
+                                          layout::GriddedLayout,
                                           max_inner_iters::Int=1)
     T_steps = length(env_path)
     @assert T_steps >= 1

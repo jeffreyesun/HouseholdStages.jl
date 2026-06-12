@@ -1,18 +1,18 @@
 using Test
 using HouseholdStages
 
-@testset "AssetPriceChangeStage — constructor returns a WealthChangeStage" begin
-    layout = StateLayout(
+@testset "AssetPriceChangeStage — constructor returns a DeterministicContinuousStage" begin
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:h,      [0.0, 1.0, 2.0]),
     )
     stage = AssetPriceChangeStage(layout; holdings_axis = :h)
-    @test stage isa WealthChangeStage
-    @test stage.spec.wealth_axis === :wealth
+    @test stage isa DeterministicContinuousStage
+    @test stage.spec.axis === :wealth
 end
 
 @testset "AssetPriceChangeStage — wealth_post closure matches hand-built recipe" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0, 4.0])),
         StateAxis(:h,      [0.0, 1.0, 2.0]),
     )
@@ -36,7 +36,7 @@ end
 end
 
 @testset "AssetPriceChangeStage — q == q_last is identity (up to interpolation)" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:h,      [0.0, 1.0]),
     )
@@ -53,7 +53,7 @@ end
 end
 
 @testset "AssetPriceChangeStage — custom field names" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:b, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:k, [0.0, 1.0, 2.0]),
     )
@@ -63,7 +63,7 @@ end
         q_field       = :p_now,
         q_last_field  = :p_prev,
     )
-    @test stage.spec.wealth_axis === :b
+    @test stage.spec.axis === :b
 
     env = (; p_now = 1.5, p_prev = 1.0)
     V_end = reshape(Float64.(1:12), (4, 3))

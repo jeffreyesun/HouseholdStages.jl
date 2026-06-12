@@ -3,16 +3,17 @@ using HouseholdStages
 
 @testset "compute_moments — mean wealth on a uniform distribution" begin
     P = [0.5 0.5; 0.5 0.5]
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([1.0, 2.0, 3.0, 4.0])),
         StateAxis(:income, [0.5, 1.5]),
     )
-    chain = MarkovStage(layout; axis = :income, transition = P)
+    chain = MarkovStage(layout; axis = :income, transition_matrix = P)
     mc = define_moments!(ChainStage((chain,));
         avg_wealth = at_end(integrand = :wealth, reduce = sum),
     )
 
     # Use a uniform distribution; one forward step keeps it uniform under P.
+    backward!(mc, zeros(4, 2), NamedTuple())        # seat the kernel
     Λ_start = fill(1 / 8, 4, 2)
     Λ_end = forward!(mc, Λ_start)
     moments = compute_moments(mc, Λ_end, NamedTuple())
@@ -22,15 +23,16 @@ end
 
 @testset "compute_moments — multiple specs in one call" begin
     P = [0.5 0.5; 0.5 0.5]
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([1.0, 2.0, 3.0])),
         StateAxis(:income, [0.5, 1.5]),
     )
-    chain = MarkovStage(layout; axis = :income, transition = P)
+    chain = MarkovStage(layout; axis = :income, transition_matrix = P)
     mc = define_moments!(ChainStage((chain,));
         K = at_end(integrand = :wealth, reduce = sum),
         N = at_end(integrand = :income, reduce = sum),
     )
+    backward!(mc, zeros(3, 2), NamedTuple())        # seat the kernel
     Λ_start = fill(1 / 6, 3, 2)
     Λ_end = forward!(mc, Λ_start)
     moments = compute_moments(mc, Λ_end, NamedTuple())
@@ -39,7 +41,7 @@ end
 end
 
 @testset "compute_moments — env-dependent integrand evaluated at call time" begin
-    layout = StateLayout(StateAxis(:wealth, continuous_grid([1.0, 2.0])))
+    layout = GriddedLayout(StateAxis(:wealth, continuous_grid([1.0, 2.0])))
     s = IdentityStage(layout)
     mc = define_moments!(ChainStage((s,));
         scaled_wealth = at_end(
@@ -55,7 +57,7 @@ end
 end
 
 @testset "define_moments! — singleton stage gets wrapped into a ChainStage" begin
-    layout = StateLayout(StateAxis(:w, continuous_grid([0.0, 1.0])))
+    layout = GriddedLayout(StateAxis(:w, continuous_grid([0.0, 1.0])))
     s = IdentityStage(layout)
     mc = define_moments!(s; total = at_end(integrand = :w, reduce = sum))
 
@@ -70,7 +72,7 @@ end
 end
 
 @testset "define_moments! — re-defining a moment errors by default" begin
-    layout = StateLayout(StateAxis(:w, continuous_grid([0.0, 1.0])))
+    layout = GriddedLayout(StateAxis(:w, continuous_grid([0.0, 1.0])))
     s   = IdentityStage(layout)
     mc1 = define_moments!(s; total = at_end(integrand = :w, reduce = sum))
     @test_throws ErrorException define_moments!(mc1; total = at_end(integrand = :w, reduce = sum))

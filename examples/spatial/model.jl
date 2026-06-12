@@ -72,14 +72,14 @@ with per-location capital and population moments attached at the end.
 The wealth-axis log grid and the four-stage layout are inlined here.
 """
 function spatial_household(p = params)
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth,   continuous_grid(p.w_min, p.w_max;
                                              length = p.N_w, spacing = :log)),
         StateAxis(:income,   p.y_grid),
         StateAxis(:location, categorical([:home, :abroad])),
     )
 
-    shock   = MarkovStage(layout; axis = :income, transition = p.P_y)
+    shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     move    = MigrationStage(layout;
         location_axis  = :location,
         migration_cost = [0.0           p.migration_cost;

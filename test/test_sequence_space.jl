@@ -53,8 +53,8 @@ end
     # tomorrow). For pure Markov, K = P^T (forward); K^T = P (backward).
     # E_t[integrand](s) = P^t · integrand applied as a vector.
     P = [0.7 0.3; 0.3 0.7]
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.0, 1.0])))
-    chain = MarkovStage(layout; axis = :z, transition = P)
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.0, 1.0])))
+    chain = MarkovStage(layout; axis = :z, transition_matrix = P)
     # Seed kernels at the steady state via a backward call.
     backward!(chain, zeros(2), NamedTuple())
     # Integrand: identity on z (so E_t[z | s_0 = s] is the t-step
@@ -72,8 +72,8 @@ end
 
 @testset "expectation_vectors — chain (Markov ∘ Identity)" begin
     P = [0.8 0.2; 0.2 0.8]
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.0, 1.0])))
-    s1 = MarkovStage(layout; axis = :z, transition = P)
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.0, 1.0])))
+    s1 = MarkovStage(layout; axis = :z, transition_matrix = P)
     s2 = IdentityStage(layout)
     chain = s1 ∘ s2
     # Seed kernels.

@@ -49,14 +49,14 @@ _u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
 u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
 
 function spatial_household(p::SpatialParams)
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth,   continuous_grid(p.w_min, p.w_max;
                                              length = p.N_w, spacing = :log)),
         StateAxis(:income,   p.y_grid),
         StateAxis(:location, categorical([:home, :abroad])),
     )
 
-    shock = MarkovStage(layout; axis = :income, transition = p.P_y)
+    shock = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
 
     migration = MigrationStage(layout;
         location_axis  = :location,

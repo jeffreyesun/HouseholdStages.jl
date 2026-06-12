@@ -2,7 +2,7 @@ using Test
 using HouseholdStages
 
 @testset "BorrowingConstraintStage — array mask sets V to -Inf on infeasible cells" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
         StateAxis(:y,      [0.5, 1.0]),
     )
@@ -19,7 +19,7 @@ using HouseholdStages
 end
 
 @testset "BorrowingConstraintStage — forward is identity on Λ" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
         StateAxis(:z,      [1, 2]),
     )
@@ -34,7 +34,7 @@ end
 end
 
 @testset "BorrowingConstraintStage — closure form materialises mask from env" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
         StateAxis(:y,      [0.5, 1.0]),
     )
@@ -44,7 +44,6 @@ end
         infeasible = (cell; env) -> cell.wealth < env.w_min,
     )
 
-    @test hasproperty(stage.buffer.kernel, :mask)
     V_end = reshape(Float64.(1:8), (4, 2))
 
     # With w_min = 0: wealth = -1 is infeasible.
@@ -60,7 +59,7 @@ end
 end
 
 @testset "BorrowingConstraintStage — closure and array forms agree" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0, 3.0])),
         StateAxis(:y,      [0.5, 1.0, 1.5]),
     )
@@ -77,7 +76,7 @@ end
 end
 
 @testset "BorrowingConstraintStage — duality identity (excluding -Inf cells)" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:y,      [0.5, 1.0]),
     )
@@ -96,11 +95,11 @@ end
 
 @testset "BorrowingConstraintStage — composition with MarkovStage" begin
     P = [0.7 0.3; 0.3 0.7]
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
         StateAxis(:z,      [0.5, 1.5]),
     )
-    markov = MarkovStage(layout; axis = :z, transition = P)
+    markov = MarkovStage(layout; axis = :z, transition_matrix = P)
     mask   = falses(4, 2); mask[1, :] .= true
     bc     = BorrowingConstraintStage(layout; infeasible = mask)
 
@@ -111,12 +110,19 @@ end
     @test all(isapprox.(V_start[2:end, :], 1.0; atol = 1e-12))
 end
 
-@testset "BorrowingConstraintStage — static_env_deps" begin
-    @test static_env_deps(HouseholdStages.BorrowingConstraintStageSpec) === NamedTuple()
+@testset "BorrowingConstraintStage — is a UtilityStage with no static env deps" begin
+    layout = GriddedLayout(
+        StateAxis(:wealth, continuous_grid([0.0, 1.0])),
+        StateAxis(:y,      [0.5, 1.0]),
+    )
+    stage = BorrowingConstraintStage(layout; infeasible = falses(2, 2))
+    @test stage isa UtilityStage
+    @test static_env_deps(typeof(stage.spec)) === NamedTuple()
+    @test effective_env_slice(stage) === ()
 end
 
 @testset "BorrowingConstraintStage — shape check on the array form" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
         StateAxis(:y,      [0.5, 1.0]),
     )

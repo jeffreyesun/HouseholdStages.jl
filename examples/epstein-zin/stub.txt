@@ -1,1 +1,0 @@
-This example should use epstein-zin preferences to have risk-aversion and EIS that would be incompatible with CRRA utility.

@@ -27,16 +27,9 @@
 #---------------------------------------#
 
 """
-    solve_vfi_steady_state_given_env!(stage, env;
-                                       V_init = nothing,
-                                       tol = 1e-7, maxiter = 4000)
-        -> (; V, iters, converged)
-
-Stage-keyed public form of the V-only fixed-point iteration. Warm-
-starts V from `V_start_buffer(stage)` if non-zero (or from the
-provided `V_init` kwarg if given), runs the Spec/Buffer-keyed
-primitive, writes the converged V back to the buffer for the next
-call's warm-start, and returns a caller-safe copy.
+Stage-keyed VFI: warm-start `V` from the buffer (or `V_init`), run the
+Spec/Buffer-keyed primitive, write the converged `V` back for the next call's
+warm-start, and return a caller-safe copy.
 """
 function solve_vfi_steady_state_given_env!(stage::AbstractStage, env;
                                            V_init       = nothing,
@@ -59,16 +52,9 @@ end
 #---------------------------------------#
 
 """
-    solve_lambda_steady_state_given_env!(stage;
-                                          Λ_init = nothing,
-                                          tol = 1e-6, maxiter = 20_000)
-        -> (; Λ, iters, converged)
-
-Stage-keyed public form of the Λ-only fixed-point iteration. `Λ_init`
-defaults to the uniform distribution over the chain's input layout —
-Λ converges fast from uniform and the buffer's Λ_end slot does not
-make a meaningful warm-start point (it can hold half-iterated state).
-Writes the converged Λ back to the buffer; returns a caller-safe copy.
+Stage-keyed Λ-iteration. `Λ_init` defaults to the uniform distribution — Λ
+converges fast from uniform, and the buffer's `Λ_end` slot can hold half-iterated
+state, so it makes a poor warm-start. Writes the converged Λ back; returns a copy.
 """
 function solve_lambda_steady_state_given_env!(stage::AbstractStage;
                                               Λ_init=nothing,
@@ -86,26 +72,10 @@ end
 #----------------------------------------------------#
 
 """
-    solve_steady_state_given_env!(stage::ChainStage, env;
-                                   V_init = nothing, Λ_init = nothing,
-                                   vfi_tol, vfi_maxiter,
-                                   lambda_tol, lambda_maxiter)
-        -> (; V, Λ, moments, history, iters)
-
-User-facing entry point for "solve the household block at this env."
-Wraps the Spec/Buffer-keyed primitive in
-`outer_loop_internal.jl` with bookkeeping the primitive deliberately
-omits:
-
-  * Warm-start `V` from `V_start_buffer(stage)` if non-zero (so a
-    second call at a perturbed env reuses the previous solution).
-  * Write converged V / Λ into the chain's buffer for the next call.
-  * Compute moments (`compute_moments(stage, Λ, env)`) if the chain has
-    any attached; empty NamedTuple otherwise.
-  * Return caller-safe copies of V and Λ (the originals live in the
-    buffer; the caller can hold these across subsequent calls).
-
-History reports the V- and Λ-iteration counts; `iters` is their sum.
+Solve the household block at one `env`. Wraps the Spec/Buffer-keyed primitive
+with the bookkeeping it omits: warm-start `V` from the buffer, write converged
+`V`/`Λ` back, compute attached moments, and return caller-safe copies. `history`
+reports the V- and Λ-iteration counts; `iters` is their sum.
 """
 function solve_steady_state_given_env!(stage::ChainStage, env;
                                        vfi_tol::Real       = 1e-7,
@@ -146,20 +116,9 @@ end
 #-----------------------------------#
 
 """
-    solve_transition_given_env_path!(stage::ChainStage, env_path;
-                                      Λ_0, V_T, max_inner_iters = 1)
-        -> (; V_path, Λ_path, moments_path, history, iters)
-
-Stage-keyed public form of the transition driver. Thin delegate to
-the Spec-keyed primitive in `outer_loop_internal.jl`, which allocates
-per-period chains internally and does the backward + forward sweep.
-Per-period buffers are an implementation detail of the primitive —
-there is no single "buffer" to thread, so the Stage-keyed surface
-just forwards `stage.spec`.
-
-Boundary conditions:
-  * `Λ_0` — initial distribution at the start of period 1.
-  * `V_T` — terminal continuation value at the end of period T.
+Stage-keyed transition driver — a thin delegate to the Spec-keyed primitive,
+which allocates per-period chains and runs the backward+forward sweep. `Λ_0` is
+the initial distribution; `V_T` the terminal continuation value.
 """
 solve_transition_given_env_path!(stage::ChainStage, env_path::AbstractVector;
                                  Λ_0::AbstractArray,
@@ -175,31 +134,12 @@ solve_transition_given_env_path!(stage::ChainStage, env_path::AbstractVector;
 #------------------------------------------#
 
 """
-    compute_direct_jacobian!(stage::ChainStage, env_ss, T;
-                              inputs = nothing, outputs = nothing,
-                              eps = 1e-5)
-        -> Jacobian (Matrix or Dict{(input, output), Matrix})
-
-Stage-keyed public form. Thin delegate to the Spec/Buffer-keyed
-primitive in `outer_loop_internal.jl`, which reads `V_ss`/`Λ_ss`
-from the buffer (the caller should typically have just called
-`solve_steady_state_given_env!` on the same stage at `env_ss`).
-
-**Direct-effect only.** The function name advertises the scope: this
-wrapper computes only the period-0 direct effect of an env
-perturbation (`curlyY_0` via two-sided finite differences at the
-steady state) and writes it on the diagonal `s = t`. Off-diagonal
-entries are zero. It does NOT compute the full fake-news matrix or
-the distribution-mediated effects (`curlyD`, `curlyE`).
-
-For the real sequence-space Jacobian, call `expectation_vectors(hh,
-integrand, T)`, `build_F(curlyY, curlyD, curlyE)`, and `J_from_F(F)`
-directly. See `examples/aiyagari_mit_shock/ssj.jl` for a worked
-example.
-
-Treat the returned matrix as a first-order direct-effect diagnostic
-only; mistaking it for a real fake-news Jacobian would produce wrong
-IRFs.
+Stage-keyed **direct-effect-only** Jacobian: the period-0 direct effect of an env
+perturbation (`curlyY_0` by two-sided FD at the steady state), written on the
+diagonal `s = t` with zeros off-diagonal. It does NOT compute the distribution-
+mediated effects (`curlyD`, `curlyE`) — for the full sequence-space Jacobian use
+`expectation_vectors`, `build_F`, and `J_from_F` (see `examples/aiyagari_mit_shock/ssj.jl`).
+Treating this as a real fake-news Jacobian would produce wrong IRFs.
 """
 compute_direct_jacobian!(stage::ChainStage, env_ss, T::Int;
                          inputs    = nothing,

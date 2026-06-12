@@ -43,7 +43,7 @@ end
 @testset "ConsumptionSavingsStage — :divide_conquer matches :sequential on the Aiyagari calibration" begin
     # Small Aiyagari-shape problem; exponential wealth grid; CRRA log utility.
     n_w = 64
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid(
             [exp(t) - 1.0 for t in range(0.0, log(101.0); length = n_w)])),
         StateAxis(:income, discrete_finite([0.6, 1.0, 1.4])),
@@ -62,12 +62,12 @@ end
     V_seq = copy(backward!(seq, V_end, env))
     V_dc  = copy(backward!(dc,  V_end, env))
 
-    @test seq.buffer.kernel.policy == dc.buffer.kernel.policy
+    @test policy(seq) == policy(dc)
     @test V_seq ≈ V_dc atol = 1e-12
 end
 
 @testset "ConsumptionSavingsStage — :divide_conquer rejects unknown search mode" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
         StateAxis(:y,      discrete_finite([1.0])),
     )

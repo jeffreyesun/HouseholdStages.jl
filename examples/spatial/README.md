@@ -27,14 +27,14 @@ deterministic `b ↦ (1 + r_loc) b + w_loc y`); finally
 
 ```julia
 function spatial_household(p = params)
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth,   continuous_grid(p.w_min, p.w_max;
                                              length = p.N_w, spacing = :log)),
         StateAxis(:income,   p.y_grid),
         StateAxis(:location, categorical([:home, :abroad])),
     )
 
-    shock   = MarkovStage(layout; axis = :income, transition = p.P_y)
+    shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     move    = MigrationStage(layout;
         location_axis  = :location,
         migration_cost = [0.0              p.migration_cost;
@@ -89,10 +89,11 @@ taste-shock scale; the kernel computes
 ```
 
 and backward yields the log-sum-exp value at each cell. The cost
-matrix is stored on the Spec; the per-destination amenity field
-(optional) defaults to a zero vector here. No user closure for the cost; shape is
-checked at construction; the cost matrix flows through `with_eltype`
-as shared static data for ForwardDiff lifts.
+matrix is stored on the Spec; a per-destination payoff shifter (the old
+`amenity`) is now a `UtilityStage` composed before the logit
+(`LogitChoiceStage ∘ UtilityStage(u)`), not a stage field. No user closure for
+the cost; shape is checked at construction; the cost matrix flows through
+`with_eltype` as shared static data for ForwardDiff lifts.
 
 ## Per-location moments via integrand closures
 

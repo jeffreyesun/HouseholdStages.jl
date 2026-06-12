@@ -3,12 +3,12 @@ using HouseholdStages
 
 # Small Aiyagari-shaped chain reused across helpers tests.
 function _aiyagari_chain(; N_w::Int = 20)
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid(0.0, 30.0; length = N_w, spacing = :log)),
         StateAxis(:income, [0.6, 1.4]),
     )
     P_y = [0.7 0.3; 0.3 0.7]
-    shock = MarkovStage(layout; axis = :income, transition = P_y)
+    shock = MarkovStage(layout; axis = :income, transition_matrix = P_y)
     receipt = WealthChangeStage(layout;
         wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
         wealth_axis = :wealth)
@@ -134,8 +134,8 @@ end
 
 @testset "define_moments! — append-only by default; overwrite kwarg works" begin
     hh = MarkovStage(
-        StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])));
-        axis = :z, transition = [0.5 0.5; 0.5 0.5],
+        GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])));
+        axis = :z, transition_matrix = [0.5 0.5; 0.5 0.5],
     )
     chain = ChainStage((hh,))
     define_moment!(chain, :K, at_end(integrand = :z, reduce = sum))

@@ -32,20 +32,20 @@ function _flatten_chain_specs(stages::Tuple)
 end
 
 """
-Chain buffer: a tuple of per-component sub-buffers plus the chain's
-own layout fields and cache. Each sub-buffer carries its own layout;
-the chain's `input_layout` mirrors the first sub-buffer, `output_layout`
-the last.
+Chain buffer: a tuple of bundled per-component sub-STAGES (each legacy or modern),
+driven through the per-stage sugar so the chain is agnostic to which protocol a
+component uses (phase-2 coexistence). The chain's `input_layout` mirrors the first
+component, `output_layout` the last.
 """
-struct ChainStageBuffer{Buffers<:Tuple, LIn, LOut} <: AbstractStageBuffer
-    stages        :: Buffers
+struct ChainStageBuffer{Stages<:Tuple, LIn, LOut} <: AbstractStageBuffer
+    stages        :: Stages
     input_layout  :: LIn
     output_layout :: LOut
     cache         :: CacheState
 end
 
 "Chain stage: a tuple of bundled sub-stages composed via `∘`."
-struct ChainStage{Spec<:ChainStageSpec, Buffer<:ChainStageBuffer} <: AbstractStage
+struct ChainStage{Spec<:ChainStageSpec, Buffer<:ChainStageBuffer} <: AbstractLegacyStage
     spec   :: Spec
     buffer :: Buffer
 end
@@ -53,11 +53,11 @@ end
 function ChainStage(stages::Tuple)
     @assert !isempty(stages)
     if all(s -> s isa AbstractStage, stages)
-        specs, sub_buffers = _flatten_chain_stage_pairs(stages)
-        spec = ChainStageSpec(specs)
-        buf  = ChainStageBuffer(sub_buffers,
-                                sub_buffers[1].input_layout,
-                                sub_buffers[end].output_layout,
+        sub_stages = _flatten_chain_stages(stages)
+        spec = ChainStageSpec(map(s -> s.spec, sub_stages))
+        buf  = ChainStageBuffer(sub_stages,
+                                input_layout(sub_stages[1]),
+                                output_layout(sub_stages[end]),
                                 CacheState())
         return ChainStage{typeof(spec), typeof(buf)}(spec, buf)
     elseif all(s -> s isa AbstractStageSpec, stages)
@@ -68,56 +68,49 @@ function ChainStage(stages::Tuple)
 end
 
 """
-Flatten a tuple of bundled stages into parallel spec/buffer tuples,
-unpacking any nested `ChainStage` so the Spec and Buffer sides stay
-flat together. Preserves the original leaf buffers — no reallocation.
+Flatten a tuple of bundled stages into one flat tuple of leaf sub-stages, unpacking
+any nested `ChainStage` (whose `buffer.stages` are themselves leaf sub-stages).
+Preserves the original leaf stages — no reallocation.
 """
-function _flatten_chain_stage_pairs(stages::Tuple)
-    specs = AbstractStageSpec[]
-    bufs  = AbstractStageBuffer[]
+function _flatten_chain_stages(stages::Tuple)
+    out = AbstractStage[]
     for s in stages
-        if s isa ChainStage
-            append!(specs, s.spec.stages)
-            append!(bufs,  s.buffer.stages)
-        else
-            push!(specs, s.spec)
-            push!(bufs,  s.buffer)
-        end
+        s isa ChainStage ? append!(out, s.buffer.stages) : push!(out, s)
     end
-    return Tuple(specs), Tuple(bufs)
+    return Tuple(out)
 end
 
 ChainStage(spec::ChainStageSpec) = error("ChainStage(spec) needs a layout; call ChainStage(spec, layout) or compose bundled stages with `∘`.")
-ChainStage(spec::ChainStageSpec, layout::StateLayout) =
+ChainStage(spec::ChainStageSpec, layout::GriddedLayout) =
     ChainStage(spec, allocate(spec, layout))
 
-bundle(spec::ChainStageSpec, layout::StateLayout) = ChainStage(spec, layout)
-bundle(spec::ChainStageSpec, layout::StateLayout, ::Type{T}) where {T} =
+bundle(spec::ChainStageSpec, layout::GriddedLayout) = ChainStage(spec, layout)
+bundle(spec::ChainStageSpec, layout::GriddedLayout, ::Type{T}) where {T} =
     ChainStage(spec, allocate(spec, layout, T))
 
-# Allocate — walk components, chaining layouts #
-#----------------------------------------------#
+# Allocate — bundle components, chaining layouts #
+#------------------------------------------------#
 
-function allocate(spec::ChainStageSpec, layout::StateLayout,
+function allocate(spec::ChainStageSpec, layout::GriddedLayout,
                   ::Type{T}=Float64) where {T}
-    sub_buffers, out_layout = _allocate_chain_buffers(spec.stages, layout, T)
-    return ChainStageBuffer(sub_buffers, layout, out_layout, CacheState())
+    sub_stages, out_layout = _allocate_chain_stages(spec.stages, layout, T)
+    return ChainStageBuffer(sub_stages, layout, out_layout, CacheState())
 end
 
 """
-Sequentially allocate component buffers, threading each component's
-`output_layout` into the next component's input. Returns the tuple
-of sub-buffers and the chain's terminal output layout.
+Sequentially bundle component stages, threading each component's `output_layout`
+into the next component's input (decision 7: a component may change levels, e.g.
+ForgetfulSum). Returns the tuple of sub-stages and the chain's terminal output layout.
 """
-function _allocate_chain_buffers(specs::Tuple, layout::StateLayout, T::Type)
-    cur     = layout
-    buffers = AbstractStageBuffer[]
+function _allocate_chain_stages(specs::Tuple, layout::GriddedLayout, T::Type)
+    cur    = layout
+    stages = AbstractStage[]
     for s in specs
-        b = allocate(s, cur, T)
-        push!(buffers, b)
-        cur = b.output_layout
+        stg = bundle(s, cur, T)
+        push!(stages, stg)
+        cur = output_layout(stg)
     end
-    return Tuple(buffers), cur
+    return Tuple(stages), cur
 end
 
 # Env slice — union over components #
@@ -148,20 +141,19 @@ end
 # Endpoint accessors #
 #--------------------#
 
-V_start_buffer(stage::ChainStage) = stage.buffer.stages[1].V_start
-Λ_end_buffer(stage::ChainStage)   = stage.buffer.stages[end].Λ_end
+V_start_buffer(stage::ChainStage) = V_start_buffer(stage.buffer.stages[1])
+Λ_end_buffer(stage::ChainStage)   = Λ_end_buffer(stage.buffer.stages[end])
 
 # Backward sweep — type-stable via @generated #
 #--------------------------------------------#
-# Heterogeneous component tuple — a runtime `n:-1:1` loop on the
-# tuple is type-unstable. `@generated` unrolls.
+# Heterogeneous component tuple — a runtime `n:-1:1` loop on the tuple is
+# type-unstable. `@generated` unrolls. Each component is driven through the
+# per-stage sugar `backward!(stage, V, env)`, uniform across legacy/modern.
 
-@generated function backward!(buffer::ChainStageBuffer{Buffers},
-                              spec::ChainStageSpec{Stages},
-                              V_end, env) where {Buffers<:Tuple, Stages<:Tuple}
+@generated function backward!(buffer::ChainStageBuffer{Stages},
+                              spec::ChainStageSpec, V_end, env) where {Stages<:Tuple}
     N = length(Stages.parameters)
-    calls = [:(V = backward!(buffer.stages[$i], spec.stages[$i], V, env))
-             for i in N:-1:1]
+    calls = [:(V = backward!(buffer.stages[$i], V, env)) for i in N:-1:1]
     return quote
         V = V_end
         $(calls...)
@@ -173,12 +165,10 @@ end
 # Forward sweep #
 #---------------#
 
-@generated function forward!(buffer::ChainStageBuffer{Buffers},
-                             spec::ChainStageSpec{Stages},
-                             Λ_start) where {Buffers<:Tuple, Stages<:Tuple}
+@generated function forward!(buffer::ChainStageBuffer{Stages},
+                             spec::ChainStageSpec, Λ_start) where {Stages<:Tuple}
     N = length(Stages.parameters)
-    calls = [:(Λ = forward!(buffer.stages[$i], spec.stages[$i], Λ))
-             for i in 1:N]
+    calls = [:(Λ = forward!(buffer.stages[$i], Λ)) for i in 1:N]
     return quote
         Λ = Λ_start
         $(calls...)
@@ -191,8 +181,8 @@ end
 
 function invalidate!(buffer::ChainStageBuffer)
     buffer.cache.kernel_valid = false
-    for b in buffer.stages
-        invalidate!(b)
+    for s in buffer.stages
+        invalidate!(s)
     end
     return buffer
 end
@@ -201,11 +191,9 @@ end
 #-----------------------#
 
 """
-    s1 ∘ s2
-
-Left-to-right (time-ordered) stage composition. `s1` runs first;
-this is the **opposite** of Julia's `∘` on `Function`. Auto-flattens
-nested chains; refuses to compose chains that already carry moments.
+Left-to-right (time-ordered) stage composition: `s1` runs first — the **opposite**
+of Julia's `∘` on functions. Auto-flattens nested chains; refuses to compose
+chains that already carry moments.
 """
 Base.:∘(a::AbstractStageSpec, b::AbstractStageSpec) =
     ChainStageSpec(_compose_spec_tuples(a, b))
@@ -231,6 +219,3 @@ end
 
 _assert_no_moments(spec::ChainStageSpec, side::AbstractString) =
     @assert isempty(spec.moments) "∘: cannot compose a ChainStageSpec that already has moments on its $side; call define_moment! last."
-
-# Legacy alias from pre-2026-05-19 — retired in a future cycle.
-const ∘ₛ = Base.:∘

@@ -1,9 +1,15 @@
 # `BuyHome` stub
 
-> Backend gap. Not implemented in `HouseholdStages/` v1. This note
-> captures what the reference implementation does and what the library
-> would need to support before this stage can be added as a first-class
-> `AbstractStage`.
+> **IMPLEMENTED (2026-06-04)** as `BuyHomeStage` in
+> `src/stages/buy_home.jl` — the **hard-max** route (Triage option 1):
+> a thin gated wrapper over `ArgmaxStage` on the housing axis. Renters
+> (`h` index 1) choose any size; owners are gated to their own `h`
+> (pass-through). The purchase price composes as a following
+> `WealthChangeStage`. Tests: `test/test_buy_home.jl`. The soft
+> `GatedLogitChoice` route (Option A below) remains unbuilt — pursue it
+> if taste-shock semantics are needed.
+>
+> Original note (backend gap, pre-`ArgmaxStage`) follows.
 
 ## What `buy_home` does
 

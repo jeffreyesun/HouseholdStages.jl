@@ -17,24 +17,22 @@ end
 end
 
 @testset "spec construction — literal ε / β" begin
-    layout = StateLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
     stage = LogitChoiceStage(layout;
-        choice_axis    = :a,
-        flow_payoff    = (cell, a; env) -> Float64(a),
-        next_state_idx = (cell, a) -> a,
-        ε              = 0.5,
+        choice_axis = :a,
+        cost_matrix = [0.0 0.5; 0.5 0.0],
+        ε           = 0.5,
     )
     @test stage.spec.ε === 0.5
     @test isempty(effective_env_slice(stage))
 end
 
 @testset "spec construction — FromEnv ε resolved from env" begin
-    layout = StateLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
     stage = LogitChoiceStage(layout;
-        choice_axis    = :a,
-        flow_payoff    = (cell, a; env) -> Float64(a),
-        next_state_idx = (cell, a) -> a,
-        ε              = FromEnv(:ξ),
+        choice_axis = :a,
+        cost_matrix = [0.0 0.5; 0.5 0.0],
+        ε           = FromEnv(:ξ),
     )
     @test stage.spec.ε === FromEnv(:ξ)
     @test :ξ in effective_env_slice(stage)

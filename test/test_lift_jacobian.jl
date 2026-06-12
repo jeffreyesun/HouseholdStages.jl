@@ -4,28 +4,28 @@ using ForwardDiff
 using ForwardDiff: Dual, Tag
 
 @testset "lift_jacobian — :reverse returns stage; uses per-stage adjoints" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.7 0.3; 0.3 0.7]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
     @test lift_jacobian(s; mode = :reverse) === s
 end
 
 @testset "lift_jacobian — unknown mode errors" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.7 0.3; 0.3 0.7]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
     @test_throws ErrorException lift_jacobian(s; mode = :sideways)
 end
 
 @testset "with_eltype — buffer eltype changes; static fields shared" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.7 0.3; 0.3 0.7]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
     D = ForwardDiff.Dual{Nothing, Float64, 1}
     s_d = with_eltype(s, D)
-    @test eltype(s_d.buffer.V_start) === D
-    @test eltype(s_d.buffer.Λ_end)   === D
-    @test s_d.spec.transition === P            # static field shared
+    @test eltype(s_d.scratch.V_start) === D
+    @test eltype(s_d.scratch.Λ_end)   === D
+    @test s_d.spec.transition_matrix === P     # static field shared
     @test input_layout(s_d)   === input_layout(s)
     @test s_d.spec.axis       === s.spec.axis
 end
@@ -35,14 +35,14 @@ end
     # Jacobian of V_in wrt V_end is exactly P (the transition matrix
     # along the dim, transposed in the Markov-rows-are-conditioning
     # convention). Verify a single tangent direction.
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.7 0.3; 0.3 0.7]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
     s_d = lift_jacobian(s; mode = :forward, n_dual = 1)
 
     # V_end has a tangent vector ξ along the z axis: ξ = e_1 = (1, 0).
     # V_end[i] = 0 + ξ[i]·ε  (primal 0, partial 1 if i=1 else 0)
-    D = eltype(s_d.buffer.V_start)
+    D = eltype(s_d.scratch.V_start)
     V_end = D[
         D(0.0, ForwardDiff.Partials((1.0,))),
         D(0.0, ForwardDiff.Partials((0.0,))),
@@ -66,12 +66,12 @@ end
     # against a centered finite difference. (Replaces the prior
     # GridSavings test after the legacy stage was removed.)
 
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
         StateAxis(:income, discrete_finite([0.5, 1.5])),
     )
     P = [0.7 0.3; 0.3 0.7]
-    shock   = MarkovStage(layout; axis = :income, transition = P)
+    shock   = MarkovStage(layout; axis = :income, transition_matrix = P)
     receipt = WealthChangeStage(layout;
         wealth_post  = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
         wealth_axis  = :wealth,
@@ -102,7 +102,7 @@ end
     r0, w0 = 0.04, 1.2
     # AD path.
     chain_dual = lift_jacobian(chain; mode = :forward, n_dual = 1)
-    D = eltype(chain_dual.buffer.stages[1].V_start)
+    D = eltype(V_start_buffer(chain_dual.buffer.stages[1]))
     r_dual = D(r0, ForwardDiff.Partials((1.0,)))
     w_dual = D(w0, ForwardDiff.Partials((0.0,)))
     K_dual = K_supplied(chain_dual, r_dual, w_dual)
@@ -125,9 +125,9 @@ end
     #     ⟨backward!(V_end), dV_start⟩ = ⟨V_end, backward_adjoint!(dV_start)⟩
     # (without the flow payoff r, since MarkovStage has r = 0). This is
     # the cleanest way to confirm the adjoint matches the primal.
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.6 0.4; 0.25 0.75]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
 
     V_end    = randn(2)
     dV_start = randn(2)
@@ -138,9 +138,9 @@ end
 end
 
 @testset "forward_adjoint!(MarkovStage) — dot-product test" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P = [0.6 0.4; 0.25 0.75]
-    s = MarkovStage(layout; axis = :z, transition = P)
+    s = MarkovStage(layout; axis = :z, transition_matrix = P)
 
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
     dΛ_end  = randn(2)
@@ -151,7 +151,7 @@ end
 end
 
 @testset "adjoints(IdentityStage) — pass-through" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     s = IdentityStage(layout)
 
     dV = randn(2)
@@ -161,21 +161,21 @@ end
 end
 
 @testset "adjoints(ForgetfulSumStage) — dot-product tests" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:w, continuous_grid([1.0, 2.0, 3.0])),
         StateAxis(:t, categorical([:a, :b])),
     )
     s = ForgetfulSumStage(layout; forget_axis = :t)
 
-    # Forward: Λ_start (3,2) → Λ_end (3,).
+    # Forward: Λ_start (3,2) → Λ_end (3,1) (:t resized to size 1, not dropped).
     Λ_start = abs.(randn(3, 2)); Λ_start ./= sum(Λ_start)
-    dΛ_end  = randn(3)
+    dΛ_end  = randn(3, 1)
     Λ_end   = copy(forward!(s, Λ_start))
     dΛ_start = forward_adjoint!(s, dΛ_end)
     @test sum(Λ_end .* dΛ_end) ≈ sum(Λ_start .* dΛ_start) atol = 1e-12
 
-    # Backward: V_end (3,) → V_start (3,2).
-    V_end    = randn(3)
+    # Backward: V_end (3,1) → V_start (3,2).
+    V_end    = randn(3, 1)
     dV_start = randn(3, 2)
     V_start  = copy(backward!(s, V_end, NamedTuple()))
     dV_end   = backward_adjoint!(s, dV_start)
@@ -183,7 +183,7 @@ end
 end
 
 @testset "adjoints(ArgmaxStage) — dot-product test" begin
-    layout = StateLayout(StateAxis(:s, categorical([:A, :B])))
+    layout = GriddedLayout(StateAxis(:s, categorical([:A, :B])))
     stage = ArgmaxStage(layout;
         choice_axis    = :s,
         flow_payoff    = (cell, a; env) -> (a == :B ? 1.0 : 0.0),
@@ -215,7 +215,7 @@ end
     V_in_minus_r = similar(V_start)
     for (idx, cell) in cells(layout)
         ci  = CartesianIndex(Tuple(idx))
-        a_i = stage.buffer.kernel.policy[ci]
+        a_i = policy(stage)[ci]
         # V_start[ci] = r(action*) + V_end[ν(s,action*)]
         r_val = (actions[a_i] == :B ? 1.0 : 0.0)
         V_in_minus_r[ci] = V_start[ci] - r_val
@@ -224,12 +224,11 @@ end
 end
 
 @testset "adjoints(LogitChoiceStage) — dot-product test on forward" begin
-    layout = StateLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
     stage = LogitChoiceStage(layout;
-        choice_axis    = :a,
-        flow_payoff    = (cell, a; env) -> Float64(a),
-        next_state_idx = (cell, a) -> a,
-        ε              = 0.5,
+        choice_axis = :a,
+        cost_matrix = [0.0 0.5; 0.5 0.0],
+        ε           = 0.5,
     )
     V_end = randn(2)
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
@@ -242,20 +241,66 @@ end
     @test sum(Λ_end .* dΛ_end) ≈ sum(Λ_start .* dΛ_start) atol = 1e-12
 
     # Verify backward_adjoint! against the analytic envelope-theorem
-    # derivative: ∂V_in[s]/∂V_end[c'] = Σ_a P(a|s) · I(ν(s,a) = c').
-    # For our setup, ν(s,a) = a (the action sets next state), so:
-    # ∂V_in[s]/∂V_end[c'] = P(c'|s) = stage.buffer.kernel.choice_prob[s, c'].
+    # derivative: ∂V_in[i]/∂V_end[j] = P(j | origin i). For dV_in = e_1
+    # (only origin i=1 contributes), backward_adjoint! returns dV_end[j] =
+    # P(j | i=1). Recompute P from the kernel — this layout is the choice
+    # axis only, so the non-choice column is s = 1:
+    #     P(j | i, s) = eψC[i,j] · W[j,s] / res[i,s].
+    k = stage.kernel
+    P_from1 = [k.eψC[1, j] * k.value_weight[j, 1] / k.normalizer[1, 1] for j in 1:2]
+    @test sum(P_from1) ≈ 1.0 atol = 1e-12
+
     e1 = Float64[1.0, 0.0]
     dV_out_via_adj = backward_adjoint!(stage, e1)
-    # backward_adjoint! pushes dV_in's contribution at s=1 backward to
-    # all destination cells weighted by P(a|s=1).
-    # For dV_in = [1, 0]: dV_out[c'] = P(c'|s=1) (only s=1 contributes).
-    @test dV_out_via_adj[1] ≈ stage.buffer.kernel.choice_prob[1, 1] atol = 1e-12
-    @test dV_out_via_adj[2] ≈ stage.buffer.kernel.choice_prob[1, 2] atol = 1e-12
+    @test dV_out_via_adj[1] ≈ P_from1[1] atol = 1e-12
+    @test dV_out_via_adj[2] ≈ P_from1[2] atol = 1e-12
+end
+
+@testset "adjoints(LogitChoiceStage, FromEnv cost) — match static-matrix VJP" begin
+    # Regression: after the Phase-6 FromEnv cost work, the lift adjoints sized
+    # n off `size(spec.cost_matrix, 1)`, which throws a MethodError when the
+    # cost is a `FromEnv` marker. The fix sources n from the layout (`_logit_n`).
+    # Build the same stage twice — once with a static cost matrix, once with the
+    # cost supplied as `FromEnv(:C)` — and assert the adjoints (i) run without
+    # error and (ii) give the identical VJP at the same evaluated point.
+    layout = GriddedLayout(StateAxis(:loc, discrete_finite([1, 2, 3])))
+    C      = [0.0 0.4 0.7; 0.4 0.0 0.3; 0.7 0.3 0.0]
+    ε      = 0.5
+
+    static = LogitChoiceStage(layout; choice_axis = :loc, cost_matrix = C, ε = ε)
+    envcost = MigrationStage(layout; location_axis = :loc,
+                             migration_cost = FromEnv(:C), ε = ε)
+    env = (C = C,)
+
+    V_end   = randn(3)
+    Λ_start = abs.(randn(3)); Λ_start ./= sum(Λ_start)
+
+    # Evaluate both primals at the same point (env populates the FromEnv kernel).
+    backward!(static,  V_end, NamedTuple())
+    backward!(envcost, V_end, env)
+    forward!(static,  Λ_start)
+    forward!(envcost, Λ_start)
+
+    dV_in  = randn(3)
+    dΛ_end = randn(3)
+
+    # (i) The FromEnv adjoints must not throw (the bug: size(::FromEnv, 1)).
+    dV_out_env   = backward_adjoint!(envcost, dV_in)
+    dΛ_start_env = forward_adjoint!(envcost, dΛ_end)
+
+    # (ii) They must equal the static-matrix adjoints exactly (same kernel point).
+    dV_out_static   = backward_adjoint!(static, dV_in)
+    dΛ_start_static = forward_adjoint!(static, dΛ_end)
+    @test dV_out_env   ≈ dV_out_static   atol = 1e-12
+    @test dΛ_start_env ≈ dΛ_start_static atol = 1e-12
+
+    # And the forward adjoint satisfies the duality identity on the env stage.
+    Λ_end_env = copy(forward!(envcost, Λ_start))
+    @test sum(Λ_end_env .* dΛ_end) ≈ sum(Λ_start .* dΛ_start_env) atol = 1e-12
 end
 
 @testset "adjoints(ConsumptionSavingsStage) — dot-product test on forward" begin
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([1.0, 2.0])),
         StateAxis(:y, discrete_finite([1.0])),
     )
@@ -275,11 +320,11 @@ end
 end
 
 @testset "adjoints(ChainStage of linear-K stages) — dot-product test" begin
-    layout = StateLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
     P1 = [0.7 0.3; 0.4 0.6]
     P2 = [0.5 0.5; 0.2 0.8]
-    s1 = MarkovStage(layout; axis = :z, transition = P1)
-    s2 = MarkovStage(layout; axis = :z, transition = P2)
+    s1 = MarkovStage(layout; axis = :z, transition_matrix = P1)
+    s2 = MarkovStage(layout; axis = :z, transition_matrix = P2)
     chain = s1 ∘ s2
 
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
@@ -298,19 +343,19 @@ end
 @testset "lift_jacobian(ChainStage with moments) — works through define_moments!" begin
     # Verify the lift propagates through `define_moments!` (which now returns
     # a `ChainStage` whose `moments` field is non-empty).
-    layout = StateLayout(
+    layout = GriddedLayout(
         StateAxis(:wealth, continuous_grid([1.0, 2.0, 3.0])),
         StateAxis(:income, [0.5, 1.5]),
     )
     P = [0.5 0.5; 0.5 0.5]
-    shock = MarkovStage(layout; axis = :income, transition = P)
+    shock = MarkovStage(layout; axis = :income, transition_matrix = P)
     mc = define_moments!(shock; K = at_end(integrand = :wealth, reduce = sum))
     mc_d = lift_jacobian(mc; mode = :forward, n_dual = 1)
 
     @test mc_d isa ChainStage
     @test !isempty(mc_d.spec.moments)                          # moments preserved through with_eltype
     inner_stage = mc_d.spec.stages[1]
-    @test eltype(inner_stage.transition) === Float64           # transition stays Float64
-    inner_buffer = mc_d.buffer.stages[1]
-    @test eltype(inner_buffer.V_start)    !== Float64          # buffer is Dual
+    @test eltype(inner_stage.transition_matrix) === Float64    # transition stays Float64
+    inner_stage_d = mc_d.buffer.stages[1]
+    @test eltype(V_start_buffer(inner_stage_d))    !== Float64          # buffer is Dual
 end
