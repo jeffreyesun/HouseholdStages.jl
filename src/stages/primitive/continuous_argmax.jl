@@ -89,10 +89,11 @@ function _payoff_field(spec::ContinuousArgmaxStageSpec, layout::GriddedLayout)
                        collect(_axis_grid(layout, spec.choice_axis)), :env in kws)
 end
 
-"Scratch: the io buffers + the payoff field `U` (a dense kernel over `(dest, origin, dep…)`, refilled each backward by the shared `fill_field!`) and `vbuf` holding the pre-discounted `β .* V_end`."
+"Scratch: the io buffers + the payoff field `U` (a dense kernel over `(dest, origin, dep…)`, filled by the shared `fill_field!` — once when the payoff is env-independent, else each backward), `vbuf` holding the pre-discounted `β · V_end`, and `filled` tracking whether `U` has been materialised (for the env-independent cache)."
 function allocate_scratch(spec::ContinuousArgmaxStageSpec, ::Type{T}, layout::GriddedLayout) where {T}
     U = dense_kernel(T, layout, spec.choice_axis, _payoff_field(spec, layout))
-    return merge(io_scratch(spec, layout, T), (U = U, vbuf = zeros(T, layout_size(layout))))
+    return merge(io_scratch(spec, layout, T),
+                 (U = U, vbuf = zeros(T, layout_size(layout)), filled = Ref(false)))
 end
 
 # Monotone argmax over a precomputed `u_slice[choice, state]` and a
@@ -244,7 +245,12 @@ function backward!(V_start, spec::ContinuousArgmaxStageSpec{F_p, T, Search},
                    env, kernel, scratch, cache) where {F_p, T, Search}
     policy = kernel.destinations             # chosen choice-axis index per cell = the destination
     source = _payoff_field(spec, layout)
-    fill_field!(scratch.U, source, layout, spec.choice_axis, env)   # SHARED materialization of U
+    # Env-independent payoff (no `; env` dep) ⇒ U is constant across calls: fill it once and reuse.
+    # Env-dependent ⇒ refill every backward, since env may have changed since the last fill.
+    if source.env_dep || !scratch.filled[]
+        fill_field!(scratch.U, source, layout, spec.choice_axis, env)   # SHARED materialization of U
+        scratch.filled[] = true
+    end
     odeps      = field_deps(source, layout)
     odep_dims  = map(a -> axis_dim(layout, a), odeps)
     odep_sizes = map(a -> _axis_size(layout, a), odeps)

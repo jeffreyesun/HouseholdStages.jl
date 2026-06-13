@@ -93,3 +93,35 @@ end
     @test_throws ErrorException ContinuousArgmaxStage(layout; payoff = pay_nochoice,
                                                       choice_axis = :wealth)
 end
+
+@testset "ConsumptionSavingsStage — env-independent utility caches the payoff table" begin
+    n_w = 32
+    layout = GriddedLayout(
+        StateAxis(:wealth, continuous_grid(
+            [exp(t) - 1.0 for t in range(0.0, log(51.0); length = n_w)])),
+        StateAxis(:income, discrete_finite([0.6, 1.0])),
+    )
+    V_end = [0.1 * w + 0.05 * y for w in 1:n_w, y in 1:2]
+
+    # The new opt-in: a utility that omits `; env` is env-independent, so its payoff
+    # table is materialised once and reused. The classic `(cell, c; env)` form is
+    # treated env-dependent (refilled each backward). Same economics ⇒ same solve.
+    cs_free = ConsumptionSavingsStage(layout; β = 0.96, utility = (cell, c) -> log(c))
+    cs_env  = ConsumptionSavingsStage(layout; β = 0.96, utility = (cell, c; env) -> log(c))
+    @test copy(backward!(cs_free, V_end, NamedTuple())) ==
+          copy(backward!(cs_env,  V_end, NamedTuple()))
+
+    # Cache correctness: the env-less form is invariant across distinct `env`s (it cannot
+    # read env), so a re-solve at a different env returns the identical V_start — the
+    # cached table is reused and is never stale.
+    V1 = copy(backward!(cs_free, V_end, (; r = 0.01)))
+    V2 = copy(backward!(cs_free, V_end, (; r = 0.50)))
+    @test V1 == V2
+
+    # The env-dependent path is not wrongly cached: a utility that genuinely reads env
+    # is refilled, so the solve tracks env.
+    cs_dep = ConsumptionSavingsStage(layout; β = 0.96, utility = (cell, c; env) -> log(c) + env.shift)
+    Va = copy(backward!(cs_dep, V_end, (; shift = 0.0)))
+    Vb = copy(backward!(cs_dep, V_end, (; shift = 5.0)))
+    @test Va != Vb
+end
