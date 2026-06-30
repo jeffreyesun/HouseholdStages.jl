@@ -6,9 +6,16 @@
 # `ForwardDiff.Dual{Tag, T, N}`; running the existing `backward!`/`forward!`
 # on Dual-typed inputs propagates tangents alongside primals.
 #
-# Reverse-mode is exposed via per-stage `backward_adjoint!`/`forward_adjoint!`.
-#TODO The manual-per-stage-adjoint pattern is architectural debt to redesign
-# separately (see memory: project_manual_adjoints_concern.md).
+# Reverse-mode is exposed via `backward_adjoint!`/`forward_adjoint!`. Per §13: a kernel that
+# satisfies the linearization property needs NO bespoke adjoint — the generic
+# `AbstractModernStage` methods below read both adjoints straight off the seated kernel
+# (`forward_adjoint! = Kᵀ·` via `backward!`, `backward_adjoint! = K·` via `forward!`). The
+# earlier "manual-per-stage-adjoint" debt is RESOLVED by that generic path: every
+# linearization-satisfying kernel (Dense/Scatter/Interp/MPS/MeanVariance, plus ForgetfulSum,
+# Argmax, LogitChoice, DeterministicContinuous) rides it with no override. The only surviving
+# hand-written overrides are the legitimate exceptions, not debt — the asymmetric
+# `PointwiseScaleStage` (a ≠ f, two unpaired diagonals) and the affine `EntryStage` (additive
+# source ⇒ identity adjoints, in `stages/primitive/entry.jl`).
 
 """
 Return a new stage whose buffer eltype is `T`, by rebundling the same Spec
@@ -76,22 +83,26 @@ forward_adjoint!(stage::AbstractLegacyStage, dΛ_end) =
 # allocated at the stage's input/output layout (NOT `similar(cotangent)`), so a SHAPE-CHANGING
 # kernel — ForgetfulSum's rectangular ones-row, or any introduce/crosswalk where input and output
 # sizes differ — is handled too; for a square kernel the layout size equals the cotangent's, so
-# it is identical. Only a non-paired kernel (discount `BackwardScale`) overrides below.
+# it is identical. Only a non-paired kernel (the two-sided `PointwiseScale` with `a ≠ f`) overrides below.
+# NB: the adjoint output is sized from the SPEC-resized layout (`input_layout(spec, layout)`), not
+# the `input_layout(stage)` accessor — the latter returns the construction layout (which `product.jl`
+# relies on), so for a shape-changing kernel (rectangular logit collapse, forget) it would mis-size.
 forward_adjoint!(stage::AbstractModernStage, dΛ_end) =
-    backward!(similar(dΛ_end, layout_size(input_layout(stage))), stage.kernel, dΛ_end;
+    backward!(similar(dΛ_end, layout_size(input_layout(stage.spec, stage.layout))), stage.kernel, dΛ_end;
               scratch = stage.scratch.kernel_scratch)   # Kᵀ · dΛ_end → input shape
 backward_adjoint!(stage::AbstractModernStage, dV_start) =
-    forward!(similar(dV_start, layout_size(output_layout(stage))), stage.kernel, dV_start;
+    forward!(similar(dV_start, layout_size(output_layout(stage.spec, stage.layout))), stage.kernel, dV_start;
              scratch = stage.scratch.kernel_scratch)    # K · dV_start → output shape
 
-# TimeDiscountingStage #
-#----------------------#
-# `BackwardScale` is NOT adjoint-paired, so override the generic modern adjoint:
-# backward K is β·Id ⇒ VJP dV_end = β·dV_start; forward K is identity ⇒ dΛ_start = dΛ_end.
-# β read off the seated kernel `Ref` (tracks a FromEnv/AD-shocked β too).
+# PointwiseScaleStage (discount / reproduction / renorm) #
+#-------------------------------------------------------#
+# A `PointwiseScale` is an adjoint pair only when its two scales agree, so override the generic
+# modern adjoint with the per-direction diagonal: backward K is a·Id ⇒ VJP dV_end = a·dV_start;
+# forward K is f·Id ⇒ dΛ_start = f·dΛ_end. Both scales read off the seated kernel `Ref`s (tracking
+# a FromEnv/AD-shocked scale too). TimeDiscountingStage rides this as `a = β`, `f = 1`.
 
-backward_adjoint!(stage::TimeDiscountingStage, dV_start) = _scale(stage.kernel) .* dV_start
-forward_adjoint!(stage::TimeDiscountingStage, dΛ_end)    = copy(dΛ_end)
+backward_adjoint!(stage::PointwiseScaleStage, dV_start) = _scale(stage.kernel) .* dV_start
+forward_adjoint!(stage::PointwiseScaleStage, dΛ_end)    = _forward_scale(stage.kernel) .* dΛ_end
 
 # ForgetfulSumStage rides the generic adjoint above: its rectangular ones-row K is a genuine
 # (shape-changing) transition, and the generic now allocates at the input/output layout, so
@@ -119,10 +130,11 @@ function forward_adjoint!(spec::ChainStageSpec, dΛ_end, buffer::ChainStageBuffe
     return dΛ
 end
 
-# Argmax / ContinuousArgmax / LogitChoice / DeterministicContinuous all ride the generic
+# Argmax / LogitChoice / DeterministicContinuous all ride the generic
 # AbstractModernStage adjoint above. Each kernel is a genuine transition whose `forward!`/
 # `backward!` verbs apply K/Kᵀ — the single-destination scatter/clip-gather, and the logit Gibbs
 # operator — frozen at the solved point by the envelope theorem. So `forward_adjoint! = Kᵀ·` and
-# `backward_adjoint! = K·` fall out with no override. (DeterministicContinuous joins because its
-# off-grid clamp makes mass-forward and value-backward exact transposes; backward_adjoint!, once
-# an unimplemented stub, is now the generic mass scatter.)
+# `backward_adjoint! = K·` fall out with no override.
+# DeterministicContinuous's `backward_adjoint! = K·` is an exact transpose at BOTH ends: the
+# both-ends off-grid clamp (a3a3409) makes forward/backward an exact K/Kᵀ pair for all destinations,
+# interior and off-grid (end-goal §8/§13; asserted to 1e-14 by the off-grid transpose test).

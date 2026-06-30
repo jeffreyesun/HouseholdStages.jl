@@ -13,8 +13,8 @@ IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavingsStage
 
 - **`IncomeShock`** — `MarkovStage` on the income axis. The K-operator
   is just `P_y`; backward applies `P_y'`, forward applies `P_y`.
-- **`IncomeReceipt`** — `WealthChangeStage` with `wealth_post = (cell;
-  env) -> (1 + env.r) * cell.wealth + env.w * cell.income`. Backward
+- **`IncomeReceipt`** — `WealthChangeStage` with `wealth_post = (;
+  wealth, income, env) -> (1 + env.r) * wealth + env.w * income`. Backward
   interpolates `V_end` linearly along the wealth axis at each cell's
   post-receipt wealth; forward redistributes mass to the wealth grid
   via share-weighted accumulation.
@@ -27,20 +27,19 @@ IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavingsStage
 ```julia
 function aiyagari_household(p = AiyagariParams())
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(p.w_min, p.w_max;
-                                           length = p.N_w, spacing = :log)),
-        StateAxis(:income, p.y_grid),
+        :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income => Discrete(p.y_grid),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis = :wealth,
+        wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income,
+        axis = :wealth,
     )
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
         utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
+        axis            = :wealth,
         monotone_search = :divide_conquer,
     )
 
@@ -53,7 +52,7 @@ end
 
 ## Why the wealth grid is log-spaced
 
-`continuous_grid(lo, hi; spacing = :log)` gives a grid dense near
+`GriddedContinuous(lo, hi, n; spacing = :log)` gives a grid dense near
 zero (where the borrowing constraint binds and policies are highly
 nonlinear) and coarse at the top. `WealthChangeStage.backward`
 interpolates `V_end` linearly — under `:linear` extrapolation past

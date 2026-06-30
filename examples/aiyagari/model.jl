@@ -14,7 +14,7 @@
 # trivial `c = b_in - b_end`. Production is Cobb-Douglas with fixed
 # labor, written as a plain function.
 #
-# The wealth grid is log-spaced (`continuous_grid(...; spacing = :log)`):
+# The wealth grid is log-spaced (`GriddedContinuous(...; spacing = :log)`):
 # dense near zero (where the borrowing constraint binds and policies are
 # highly nonlinear) and coarse at the top. `WealthChangeStage.backward`
 # linearly interpolates V — the top of the grid must be far enough out
@@ -49,14 +49,6 @@ Base.Broadcast.broadcastable(p::AiyagariParams) = Ref(p)
 const aiyagari_params = AiyagariParams()
 
 
-# Utility #
-#---------#
-
-_u_crra(c, ::Val{1}) = log(c)
-_u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
-u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
-
-
 # Household chain assembly #
 #--------------------------#
 
@@ -68,22 +60,16 @@ and the three-stage layout are inlined here.
 """
 function aiyagari_household(p = aiyagari_params)
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(p.w_min, p.w_max;
-                                           length = p.N_w, spacing = :log)),
-        StateAxis(:income, p.y_grid),
+        :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income => Discrete(p.y_grid),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
-    receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis = :wealth,
-    )
+    receipt = IncomeStage(layout) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
-        β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
-        monotone_search = :divide_conquer,
-    )
+        β       = p.β,
+        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;

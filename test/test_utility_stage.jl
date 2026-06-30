@@ -4,10 +4,10 @@ using ForwardDiff: ForwardDiff, Dual
 
 @testset "UtilityStage — backward adds u(s) to V_end" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:income, [0.5, 1.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :income => Discrete([0.5, 1.0]),
     )
-    u = (cell; env) -> cell.wealth + env.bonus
+    u = (; wealth, env) -> wealth + env.bonus
     stage = UtilityStage(layout; utility = u)
 
     V_end = zeros(3, 2)
@@ -22,8 +22,8 @@ using ForwardDiff: ForwardDiff, Dual
 end
 
 @testset "UtilityStage — backward composes additively with V_end" begin
-    layout = GriddedLayout(StateAxis(:z, [1, 2, 3]))
-    u = (cell; env) -> Float64(cell.z)
+    layout = GriddedLayout(:z => Discrete([1, 2, 3]))
+    u = (; z) -> Float64(z)
     stage = UtilityStage(layout; utility = u)
 
     V_end = [10.0, 20.0, 30.0]
@@ -33,10 +33,10 @@ end
 
 @testset "UtilityStage — forward is identity on Λ" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 0.5, 1.0])),
-        StateAxis(:z, [:a, :b]),
+        :w => GriddedContinuous([0.0, 0.5, 1.0]),
+        :z => Discrete([:a, :b]),
     )
-    u = (cell; env) -> 1.0   # any utility; forward shouldn't read it
+    u = (;) -> 1.0   # any utility; forward shouldn't read it
     stage = UtilityStage(layout; utility = u)
 
     Λ_start = rand(3, 2); Λ_start ./= sum(Λ_start)
@@ -49,10 +49,10 @@ end
     # ⟨V_in, Λ_in⟩ = ⟨V_out, Λ_out⟩ + ⟨r, Λ_in⟩
     # With Λ_out = Λ_in and r = u, this reduces to V_in = V_out + u.
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:income, [0.5, 1.0, 1.5]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :income => Discrete([0.5, 1.0, 1.5]),
     )
-    u = (cell; env) -> log1p(cell.wealth) * cell.income
+    u = (; wealth, income) -> log1p(wealth) * income
     stage = UtilityStage(layout; utility = u)
 
     V_out = randn(4, 3)
@@ -68,20 +68,20 @@ end
 end
 
 @testset "UtilityStage — effective_env_slice is empty (no introspection)" begin
-    layout = GriddedLayout(StateAxis(:z, [1, 2]))
-    u = (cell; env) -> env.σ * cell.z
+    layout = GriddedLayout(:z => Discrete([1, 2]))
+    u = (; z, env) -> env.σ * z
     stage = UtilityStage(layout; utility = u)
     @test effective_env_slice(stage) == ()
 
-    stage_nodeps = UtilityStage(layout; utility = (cell; env) -> 0.0)
+    stage_nodeps = UtilityStage(layout; utility = (;) -> 0.0)
     @test effective_env_slice(stage_nodeps) == ()
 end
 
 @testset "UtilityStage — composition with MarkovStage" begin
     P = [0.7 0.3; 0.3 0.7]
-    layout = GriddedLayout(StateAxis(:z, [0.5, 1.5]))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     markov = MarkovStage(layout; axis = :z, transition_matrix = P)
-    util   = UtilityStage(layout; utility = (cell; env) -> cell.z)
+    util   = UtilityStage(layout; utility = (; z) -> z)
 
     chain = markov ∘ util
     V_start = backward!(chain, zeros(2), NamedTuple())
@@ -90,8 +90,8 @@ end
 end
 
 @testset "UtilityStage — Dual-typed buffer rebuild for AD" begin
-    layout = GriddedLayout(StateAxis(:z, [1, 2, 3]))
-    u = (cell; env) -> Float64(cell.z) * env.a
+    layout = GriddedLayout(:z => Discrete([1, 2, 3]))
+    u = (; z, env) -> Float64(z) * env.a
     stage = UtilityStage(layout; utility = u)
 
     DualT = ForwardDiff.Dual{Nothing, Float64, 1}

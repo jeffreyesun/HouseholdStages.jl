@@ -11,14 +11,14 @@
 "Pure stage configuration. Layout-free; one struct per stage class."
 abstract type AbstractStageSpec end
 
-"Per-call buffer: kernel + scratch + V/Λ outputs + layouts + cache."
+"Per-call buffer: kernel + scratch + V/Λ outputs + layouts."
 abstract type AbstractStageBuffer end
 
 "Bundle of one Spec and one Buffer; the user-facing layer."
 abstract type AbstractStage end
 
 # Two supertypes split the protocol. `AbstractLegacyStage` — the `(buffer, spec)`
-# bundled stages (CacheState + the legacy `backward!`/`forward!` sugar); now only the
+# bundled stages (the legacy `backward!`/`forward!` sugar); now only the
 # `ChainStage`/`ProductStage` combinators. `AbstractModernStage` — the
 # `(spec, layout)`-dispatch stages (stage = spec/layout/kernel/scratch/cache, the
 # functional-core/stateful-shell `backward!`/`forward!`); all production primitives.
@@ -26,52 +26,6 @@ abstract type AbstractStage end
 # validation) serves both; sugar + buffer accessors dispatch per supertype.
 abstract type AbstractLegacyStage <: AbstractStage end
 abstract type AbstractModernStage <: AbstractStage end
-
-# Cache fingerprint #
-#-------------------#
-
-"""
-Records the `(V_end, env)` a `backward!` last consumed, so a later
-`forward!` can check its kernel is still valid for the pair it's given.
-"""
-mutable struct CacheState
-    last_V_hash  :: UInt
-    last_env     :: Any
-    kernel_valid :: Bool
-end
-CacheState() = CacheState(zero(UInt), nothing, false)
-
-"""
-Cheap, GPU-safe staleness fingerprint of `V_end`. Host `Array`s use the full
-content `hash`; device arrays fingerprint via on-device reductions `(size, sum,
-sum-of-squares)`, since `hash` scalar-indexes a `CuArray` and errors.
-"""
-_v_fingerprint(V_end::Array) = hash(V_end)
-function _v_fingerprint(V_end::AbstractArray)
-    s  = sum(V_end)
-    s2 = sum(abs2, V_end)
-    return hash((size(V_end), length(V_end), s, s2))
-end
-_v_fingerprint(V_end) = hash(V_end)   # scalars, NamedTuples, …
-
-"""
-Stamp the buffer's cache with the `(V_end, env)` `backward!` just
-consumed. Call at the end of every concrete `backward!`.
-"""
-function _seat_cache!(buffer::AbstractStageBuffer, V_end, env)
-    c = buffer.cache
-    c.last_V_hash  = _v_fingerprint(V_end)
-    c.last_env     = env
-    c.kernel_valid = true
-    return buffer
-end
-
-"Mark the cache stale; the next cache-checking `forward!` will refuse to run trusted."
-function invalidate!(buffer::AbstractStageBuffer)
-    buffer.cache.kernel_valid = false
-    return buffer
-end
-invalidate!(stage::AbstractLegacyStage) = (invalidate!(stage.buffer); stage)
 
 # Allocation protocol #
 #---------------------#
@@ -87,33 +41,15 @@ default_eltype(::AbstractStageSpec) = Float64
 # Stage-keyed delegates — buffer-first dispatch on the spec-keyed methods #
 #------------------------------------------------------------------------#
 
-"`backward!(stage, V_end, env) -> V_start`. Legacy bundled-stage delegate."
-backward!(stage::AbstractLegacyStage, V_end, env) =
-    backward!(stage.buffer, stage.spec, V_end, env)
+"`backward!(stage, V_end, env; env_changed) -> V_start`. Legacy bundled-stage delegate; threads
+`env_changed` (default `true`) down to the components' fill sites (end-goal §5.3)."
+backward!(stage::AbstractLegacyStage, V_end, env; env_changed::Bool = true) =
+    backward!(stage.buffer, stage.spec, V_end, env; env_changed)
 
 "`forward!(stage, Λ_start) -> Λ_end`. Legacy bundled-stage delegate. (A wrapped
 `AbstractPopulation` routes to the population seam in population.jl instead.)"
 forward!(stage::AbstractLegacyStage, Λ_start::AbstractArray) =
     forward!(stage.buffer, stage.spec, Λ_start)
-
-"""
-Cache-checking `forward!`: refuses to run unless the cache agrees with `(V_end, env)`.
-`reseat_if_stale` re-runs `backward!` instead of erroring; `check=false` skips the check.
-"""
-function forward!(stage::AbstractLegacyStage, Λ_start, V_end, env;
-                  reseat_if_stale::Bool=false, check::Bool=true)
-    if check
-        c = stage.buffer.cache
-        fresh = c.kernel_valid && _v_fingerprint(V_end) == c.last_V_hash &&
-                isequal(env, c.last_env)
-        if !fresh
-            reseat_if_stale || error("forward!: cached kernel is stale for this (V_end, env). " *
-                                     "Pass reseat_if_stale=true or call backward! first.")
-            backward!(stage, V_end, env)
-        end
-    end
-    return forward!(stage, Λ_start)
-end
 
 # Public accessors #
 #------------------#
@@ -186,13 +122,13 @@ end
 
 """
 Modern stateful sugar: run the functional core with the stage's `kernel/scratch/cache`,
-store the returned kernel back on the stage, and return just `V_start`. Call signature
-is unchanged from the legacy sugar — zero call-site churn.
+store the returned kernel back on the stage, and return just `V_start`. Threads `env_changed`
+(default `true`) to the core's static refill policy (end-goal §5.3) — the lone call-site addition.
 """
-function backward!(stage::AbstractModernStage, V_end, env)
+function backward!(stage::AbstractModernStage, V_end, env; env_changed::Bool = true)
     _, kernel = backward!(stage.scratch.V_start, stage.spec, stage.layout, V_end;
                           env, kernel=stage.kernel,
-                          scratch=stage.scratch, cache=stage.cache)
+                          scratch=stage.scratch, cache=stage.cache, env_changed)
     stage.kernel = kernel
     return stage.scratch.V_start
 end
@@ -219,10 +155,6 @@ output_layout(stage::AbstractModernStage) = output_layout(stage.spec, stage.layo
 V_start_buffer(stage::AbstractModernStage) = stage.scratch.V_start
 Λ_end_buffer(stage::AbstractModernStage)   = stage.scratch.Λ_end
 
-# No staleness cache in the modern model (freshness is the backward-then-forward
-# convention) — `invalidate!` is a no-op so a legacy chain can walk mixed components.
-invalidate!(stage::AbstractModernStage) = stage
-
 # Dependency machinery #
 #----------------------#
 
@@ -237,9 +169,14 @@ end
 effective_env_slice(stage::AbstractStage) = effective_env_slice(stage.spec)
 
 """
-Marker wrapping a Symbol that names an `env` field. Spec fields hold
-either a literal value or a `FromEnv(:key)`; `resolve` dispatches on
-the value's type.
+The deduped union of `effective_env_slice` over a collection of sub-specs — the env slice a
+composite stage (chain, product, mixing) needs is the union of its components'.
+"""
+_union_env_slices(specs) = Tuple(unique(Iterators.flatten(effective_env_slice(s) for s in specs)))
+
+"""
+Marker wrapping a Symbol that names an `env` field. Spec fields hold either a literal value or a
+`FromEnv(:key)`; `resolve` dispatches on the value's type, looking the key up in `env`.
 """
 struct FromEnv
     key :: Symbol
@@ -253,12 +190,8 @@ resolve(fe::FromEnv, ::Nothing) = fe
 
 "Names of `env` fields the spec currently reads — the `FromEnv` markers held in any field."
 function _env_field_names(spec::AbstractStageSpec)
-    syms = Symbol[]
-    for fn in fieldnames(typeof(spec))
-        v = getfield(spec, fn)
-        v isa FromEnv && push!(syms, v.key)
-    end
-    return Tuple(syms)
+    fields = (getfield(spec, fn) for fn in fieldnames(typeof(spec)))
+    return Tuple(f.key for f in fields if f isa FromEnv)
 end
 
 "Check that `env` provides every field in `effective_env_slice(spec)`."
@@ -289,26 +222,10 @@ function make_env(spec::AbstractStageSpec; kwargs...)
 end
 make_env(stage::AbstractStage; kwargs...) = make_env(stage.spec; kwargs...)
 
-# Numerical helpers #
-#-------------------#
-
-"""
-In-place numerically-stable softmax of `U / ε` along its trailing
-axis. Overwrites `U` with the choice probabilities and writes the
-per-row `ε · log Σ exp(U[i,:]/ε)` into `lse` (shaped like `U`'s
-leading axes). At least one entry per row must be finite.
-"""
-function _softmax_and_lse_along_last!(lse::AbstractArray{T},
-                                      U::AbstractArray, ε::Real) where {T}
-    Uflat   = reshape(U, :, last(size(U)))
-    lseflat = vec(lse)
-    for (s, u_row) in enumerate(eachrow(Uflat))
-        m = maximum(u_row)
-        @assert isfinite(m)
-        @. u_row = exp((u_row - m) / ε)
-        denom = sum(u_row)
-        u_row ./= denom
-        lseflat[s] = m + ε * log(denom)
-    end
-    return lse
-end
+# Stage → population forward seam — apply the kernel (the linear operator) to a population. Unwrapping
+# to the raw masses, applying the stage's existing `forward!`, and rewrapping keeps the "kernel acts on
+# a distribution representation" framing literal: a `GriddedPopulation` flows through unchanged in kind,
+# only its masses move. Lives here (not in populations/population.jl) so populations stays a foundational
+# layer loaded before the stage protocol that `AbstractStage` belongs to.
+forward!(stage::AbstractStage, Λ::GriddedPopulation) =
+    GriddedPopulation(forward!(stage, masses(Λ)))

@@ -7,27 +7,23 @@ using HouseholdStages
     # backward/forward output buffers live in `.scratch` (`V_start`/`Λ_end`), no wrapper.
     P = [0.9 0.1; 0.2 0.8]
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z, discrete_finite([0.5, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     stage = MarkovStage(layout; axis = :z, transition_matrix = P)
-    @test stage.kernel isa PermutedDimsArray
+    @test stage.kernel isa HouseholdStages.DenseKernel
     @test hasproperty(stage.scratch, :V_start)
     @test hasproperty(stage.scratch, :Λ_end)
 end
 
 @testset "allocate — ArgmaxStage holds its single-destination kernel" begin
-    layout = GriddedLayout(StateAxis(:s, categorical([:A, :B])))
-    stage = ArgmaxStage(layout;
-        choice_axis    = :s,
-        flow_payoff    = (a; cell, env) -> (a == :B ? 1.0 : 0.0),
-        next_state_idx = (cell, a) -> a == :A ? 1 : 2,
-    )
-    # A modern ArgmaxStage holds its `SingleDestinationKernel` directly in `.kernel`; the
+    layout = GriddedLayout(:s => Discrete([:A, :B]))
+    stage = ArgmaxStage(layout; axis = :s, reward = [0.0 0.0; 1.0 1.0])
+    # A modern ArgmaxStage holds its `ScatterKernel` (discrete axis) directly in `.kernel`; the
     # integer per-cell destination lives on the kernel (the AD lift reads it there too). The
     # backward/forward output buffers (`V_start`/`Λ_end`) live in `.scratch`.
     @test stage isa HouseholdStages.AbstractModernStage
-    @test stage.kernel isa HouseholdStages.SingleDestinationKernel
+    @test stage.kernel isa HouseholdStages.ScatterKernel
     @test policy(stage) isa Array{Int}
     @test hasproperty(stage.scratch, :V_start)
     @test hasproperty(stage.scratch, :Λ_end)
@@ -36,9 +32,9 @@ end
 end
 
 @testset "allocate — LogitChoiceStage operator holds the cost/weight matrices" begin
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis        = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = 0.5,
     )
@@ -47,8 +43,8 @@ end
     # full layout-shaped — here just (n,), since the layout is the choice axis only.
     @test stage isa HouseholdStages.AbstractModernStage
     @test stage.kernel isa HouseholdStages.LogitChoiceKernel
-    @test stage.kernel.eψC isa AbstractMatrix
-    @test size(stage.kernel.eψC) == (2, 2)
+    @test stage.kernel.eψC isa HouseholdStages.DenseKernel
+    @test size(parent(stage.kernel.eψC)) == (2, 2)
     @test size(stage.kernel.value_weight)   == (2,)
     @test size(stage.kernel.normalizer) == (2,)
     @test hasproperty(stage.scratch, :rowmax) && hasproperty(stage.scratch, :kernel_scratch)
@@ -56,16 +52,18 @@ end
 
 @testset "allocate — ForgetfulSumStage rides a ones-row marginalising kernel" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:t, categorical([:a, :b, :c, :d])),
+        :w => GriddedContinuous([0.0, 1.0, 2.0]),
+        :t => Discrete([:a, :b, :c, :d]),
     )
-    stage = ForgetfulSumStage(layout; forget_axis = :t)
-    # Modern stage: the kernel IS a ones-row marginalising self-describing array; its
-    # compact parent is ones(1, n_forget) (n_out = 1, n_in = n_forget = 4).
+    stage = ForgetfulSumStage(layout; axis = :t)
+    # ForgetfulSum is now a `MarkovStage(ones(4,1))`: a ones-row marginalising self-describing array,
+    # compact parent ones(1, n_forget) (n_out = 1, n_in = n_forget = 4). The Markov fills its kernel
+    # in `backward!`, so the ones appear after a sweep (the allocation is zeros).
     @test stage isa HouseholdStages.AbstractModernStage
-    @test stage.kernel isa PermutedDimsArray
+    @test stage.kernel isa HouseholdStages.DenseKernel
     @test (size(parent(stage.kernel), 1), size(parent(stage.kernel), 2)) == (1, 4)
-    @test all(stage.kernel .== 1)
+    backward!(stage, zeros(3, 1), nothing)
+    @test all(parent(stage.kernel) .== 1)
     # scratch carries the layout-shaped I/O buffers (V_start full axis, Λ_end resized).
     @test size(stage.scratch.V_start) == (3, 4)
     @test size(stage.scratch.Λ_end)   == (3, 1)
@@ -73,7 +71,7 @@ end
 
 @testset "allocate — ChainStage returns per-stage tuple" begin
     P = [0.7 0.3; 0.3 0.7]
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     s1 = MarkovStage(layout; axis = :z, transition_matrix = P)
     s2 = MarkovStage(layout; axis = :z, transition_matrix = P)
     chain = s1 ∘ s2
@@ -84,8 +82,8 @@ end
     # output buffers in `.scratch` (V_start/Λ_end).
     @test chain.buffer.stages[1] isa MarkovStage
     @test chain.buffer.stages[2] isa MarkovStage
-    @test chain.buffer.stages[1].kernel isa PermutedDimsArray
-    @test chain.buffer.stages[2].kernel isa PermutedDimsArray
+    @test chain.buffer.stages[1].kernel isa HouseholdStages.DenseKernel
+    @test chain.buffer.stages[2].kernel isa HouseholdStages.DenseKernel
     @test hasproperty(chain.buffer.stages[1].scratch, :V_start)
     @test hasproperty(chain.buffer.stages[2].scratch, :V_start)
 end
@@ -93,8 +91,8 @@ end
 @testset "single-stage backward/forward via buffers" begin
     P = [0.9 0.1; 0.2 0.8]
     layout = GriddedLayout(
-        StateAxis(:z, discrete_finite([0.5, 1.5])),
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
+        :z => Discrete([0.5, 1.5]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
     )
     stage = MarkovStage(layout; axis = :z, transition_matrix = P)
     V_end = ones(2, 3)

@@ -4,10 +4,10 @@ using HouseholdStages
 # Small two-location layout used across the tests.
 function _two_loc_layout(; n_w = 3, n_loc = 2)
     return GriddedLayout(
-        StateAxis(:wealth,   continuous_grid(collect(range(0.0, 1.0; length = n_w)))),
-        StateAxis(:location, categorical(n_loc == 2 ? [:home, :abroad] :
+        :wealth => GriddedContinuous(collect(range(0.0, 1.0; length = n_w))),
+        :location => Discrete(n_loc == 2 ? [:home, :abroad] :
                                           n_loc == 3 ? [:a, :b, :c] :
-                                          [Symbol("loc$i") for i in 1:n_loc])),
+                                          [Symbol("loc$i") for i in 1:n_loc]),
     )
 end
 
@@ -24,13 +24,12 @@ function _choice_prob(stage, n_w, n_l)
 end
 
 @testset "MigrationStage — cost matrix shape check (fires at backward!)" begin
-    # The shape @assert now lives in backward! (the Spec is @kwdef, no body).
     layout = _two_loc_layout()
-    stage = MigrationStage(layout; location_axis = :location,
+    stage = MigrationStage(layout; axis = :location,
         migration_cost = [0.0 0.5 0.0; 0.5 0.0 0.0], ε = 1.0)   # wrong shape
     n_w, n_l = axissize.(layout.axes)
-    # A constant cost sizes the dense kernel from its own shape, so a wrong shape now
-    # surfaces at the backward contraction (DimensionMismatch) rather than the fill assertion.
+    # A constant cost sizes the dense kernel from its own shape, so a wrong shape surfaces at the
+    # backward contraction (DimensionMismatch) rather than the fill assertion.
     @test_throws DimensionMismatch backward!(stage, zeros(n_w, n_l), NamedTuple())
 end
 
@@ -39,7 +38,7 @@ end
     C = [0.0 0.5;
          0.5 0.0]
     stage = MigrationStage(layout;
-        location_axis  = :location,
+        axis           = :location,
         migration_cost = C,
         ε              = 1.0,
     )
@@ -76,7 +75,7 @@ end
     # Make moving home a strictly better option from abroad: V_end at home is high.
     C = [0.0 1.0; 0.0 0.0]   # cost to move into home from abroad is 0, but C[2,2]=0 stays
     stage = MigrationStage(layout;
-        location_axis  = :location,
+        axis           = :location,
         migration_cost = C,
         ε              = 1e-4,                       # almost-degenerate logit
     )
@@ -104,7 +103,7 @@ end
     layout = _two_loc_layout()
     C = [0.0 0.3;
          0.3 0.0]
-    stage = MigrationStage(layout; location_axis = :location, migration_cost = C, ε = 2.0)
+    stage = MigrationStage(layout; axis = :location, migration_cost = C, ε = 2.0)
 
     n_w, n_l = axissize.(layout.axes)
     V_end   = randn(n_w, n_l)
@@ -141,7 +140,7 @@ end
     layout = _two_loc_layout()
     C = [0.0 0.4;
          0.4 0.0]
-    stage = MigrationStage(layout; location_axis = :location, migration_cost = C, ε = 1.5)
+    stage = MigrationStage(layout; axis = :location, migration_cost = C, ε = 1.5)
 
     n_w, n_l = axissize.(layout.axes)
     V_end   = randn(n_w, n_l)
@@ -159,13 +158,13 @@ end
     layout = _two_loc_layout()
     C = [0.0 0.4;
          0.4 0.0]
-    move = MigrationStage(layout; location_axis = :location, migration_cost = C, ε = 2.0)
+    move = MigrationStage(layout; axis = :location, migration_cost = C, ε = 2.0)
     receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> begin
-            r = cell.location == :home ? env.r_home : env.r_abroad
-            return (1 + r) * cell.wealth
+        wealth_post = (; location, wealth, env) -> begin
+            r = location == :home ? env.r_home : env.r_abroad
+            return (1 + r) * wealth
         end,
-        wealth_axis = :wealth,
+        axis = :wealth,
     )
     chain = move ∘ receipt
 
@@ -190,8 +189,8 @@ end
     C = [0.0 0.5;
          0.5 0.0]
     a = [0.0, 1.5]                                     # destination 2 gets +1.5
-    move = MigrationStage(layout; location_axis = :location, migration_cost = C, ε = 1.0)
-    stage = move ∘ UtilityStage(layout; utility = (cell; env) -> a[cell.location == :home ? 1 : 2])
+    move = MigrationStage(layout; axis = :location, migration_cost = C, ε = 1.0)
+    stage = move ∘ UtilityStage(layout; utility = (; location) -> a[location == :home ? 1 : 2])
 
     n_w, n_l = axissize.(layout.axes)
     V_end = zeros(n_w, n_l)
@@ -218,7 +217,7 @@ end
     # in effective_env_slice) — not a side channel. Changing the
     # env cost changes the policy; the closed form matches at each env.
     layout = _two_loc_layout()
-    stage = MigrationStage(layout; location_axis = :location,
+    stage = MigrationStage(layout; axis = :location,
                            migration_cost = FromEnv(:C), ε = 1.0)
     @test :C in effective_env_slice(stage)
 
@@ -255,7 +254,7 @@ end
     # env carries the whole matrix scaled by a mobility scalar. Demonstrates the
     # FromEnv cost reacting to a low-dimensional aggregate (a mobility cost level).
     layout = _two_loc_layout()
-    stage = MigrationStage(layout; location_axis = :location,
+    stage = MigrationStage(layout; axis = :location,
                            migration_cost = FromEnv(:C), ε = 1.0)
     n_w, n_l = axissize.(layout.axes)
     base = [0.0 1.0; 1.0 0.0]
@@ -274,15 +273,15 @@ end
     # renters pay Cbase. The cost is stored ONLY over (origin, dest, tenure) —
     # dep-only storage, never replicated over wealth.
     layout = GriddedLayout(
-        StateAxis(:wealth,   continuous_grid([0.0, 1.0])),
-        StateAxis(:tenure,   categorical([:rent, :own])),
-        StateAxis(:location, categorical([:home, :abroad])),
+        :wealth => GriddedContinuous([0.0, 1.0]),
+        :tenure => Discrete([:rent, :own]),
+        :location => Discrete([:home, :abroad]),
     )
     Cbase = [0.0 0.4; 0.4 0.0]
     # C[origin, dest] over :location; varies along :tenure (owners immobile). The choice
     # axis is the matrix's two positional dims, so only :tenure is a kwarg.
     migcost(; tenure) = tenure == :own ? [0.0 Inf; Inf 0.0] : Cbase
-    stage = MigrationStage(layout; location_axis = :location, migration_cost = migcost, ε = 1.0)
+    stage = MigrationStage(layout; axis = :location, migration_cost = migcost, ε = 1.0)
     n_w, n_t, n_l = axissize.(layout.axes)
     V_end = zeros(n_w, n_t, n_l); V_end[:, :, 2] .= 1.0      # :abroad more valuable
     backward!(stage, V_end, NamedTuple())
@@ -315,8 +314,8 @@ end
 
 @testset "MigrationStage — dep-varying cost: duality and forward adjoint" begin
     layout = GriddedLayout(
-        StateAxis(:income,   discrete_finite([0.6, 1.4])),
-        StateAxis(:location, categorical([:home, :abroad])),
+        :income => Discrete([0.6, 1.4]),
+        :location => Discrete([:home, :abroad]),
     )
     # Low-income households are immobile; cost reacts to an env mobility scalar. C[origin,
     # dest] over :location varies along :income and env, so :income and env are the kwargs.
@@ -324,7 +323,7 @@ end
         off = income < 1.0 ? Inf : 0.5 * env.mob
         return [0.0 off; off 0.0]
     end
-    stage = MigrationStage(layout; location_axis = :location, migration_cost = migcost, ε = 0.9)
+    stage = MigrationStage(layout; axis = :location, migration_cost = migcost, ε = 0.9)
     n_z, n_l = axissize.(layout.axes)
     env = (mob = 2.0,)
 
@@ -353,7 +352,7 @@ end
 @testset "MigrationStage — static_env_deps / effective_env_slice" begin
     layout = _two_loc_layout()
     move = MigrationStage(layout;
-        location_axis  = :location,
+        axis           = :location,
         migration_cost = [0.0 0.5; 0.5 0.0],
         ε              = 1.0,
     )
@@ -362,7 +361,7 @@ end
 
     # ε given as a Symbol surfaces as an env field.
     move2 = MigrationStage(layout;
-        location_axis  = :location,
+        axis           = :location,
         migration_cost = [0.0 0.5; 0.5 0.0],
         ε              = FromEnv(:eps_logit),
     )

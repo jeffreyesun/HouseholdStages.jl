@@ -3,10 +3,10 @@ using HouseholdStages
 
 @testset "AdvanceAgeStage — is a MarkovStage on the age axis" begin
     layout = GriddedLayout(
-        StateAxis(:age,    discrete_finite([1, 2, 3, 4])),
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
+        :age => Discrete([1, 2, 3, 4]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
     )
-    stage = AdvanceAgeStage(layout; age_axis = :age)
+    stage = AdvanceAgeStage(layout; axis = :age)
     @test stage isa MarkovStage
     @test stage.spec.axis === :age
     T = stage.spec.transition_matrix
@@ -17,7 +17,7 @@ using HouseholdStages
 end
 
 @testset "AdvanceAgeStage — backward reads continuation at age a+1" begin
-    layout = GriddedLayout(StateAxis(:age, discrete_finite([1, 2, 3, 4])))
+    layout = GriddedLayout(:age => Discrete([1, 2, 3, 4]))
     stage = AdvanceAgeStage(layout)
 
     V_end = [10.0, 20.0, 30.0, 40.0]
@@ -27,7 +27,7 @@ end
 end
 
 @testset "AdvanceAgeStage — forward pushes mass one age up (absorbing top)" begin
-    layout = GriddedLayout(StateAxis(:age, discrete_finite([1, 2, 3, 4])))
+    layout = GriddedLayout(:age => Discrete([1, 2, 3, 4]))
     stage = AdvanceAgeStage(layout; absorb_top = true)
     backward!(stage, zeros(4), nothing)             # seat the kernel
 
@@ -39,7 +39,7 @@ end
 end
 
 @testset "AdvanceAgeStage — non-absorbing top drops the terminal cohort" begin
-    layout = GriddedLayout(StateAxis(:age, discrete_finite([1, 2, 3, 4])))
+    layout = GriddedLayout(:age => Discrete([1, 2, 3, 4]))
     stage = AdvanceAgeStage(layout; absorb_top = false)
 
     T = stage.spec.transition_matrix
@@ -55,10 +55,10 @@ end
 
 @testset "AdvanceAgeStage — custom age axis name and non-leading position" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0])),
-        StateAxis(:cohort, discrete_finite([1, 2, 3])),
+        :wealth => GriddedContinuous([0.0, 1.0]),
+        :cohort => Discrete([1, 2, 3]),
     )
-    stage = AdvanceAgeStage(layout; age_axis = :cohort)
+    stage = AdvanceAgeStage(layout; axis = :cohort)
     @test stage.spec.axis === :cohort
     @test size(stage.spec.transition_matrix) == (3, 3)
 
@@ -70,8 +70,8 @@ end
 
 @testset "AdvanceAgeStage — duality identity (pure Markov, r = 0)" begin
     layout = GriddedLayout(
-        StateAxis(:age,    discrete_finite([1, 2, 3, 4])),
-        StateAxis(:income, discrete_finite([0.5, 1.5])),
+        :age => Discrete([1, 2, 3, 4]),
+        :income => Discrete([0.5, 1.5]),
     )
     stage = AdvanceAgeStage(layout; absorb_top = true)
 

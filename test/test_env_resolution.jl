@@ -17,9 +17,9 @@ end
 end
 
 @testset "spec construction — literal ε / β" begin
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = 0.5,
     )
@@ -28,9 +28,9 @@ end
 end
 
 @testset "spec construction — FromEnv ε resolved from env" begin
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = FromEnv(:ξ),
     )

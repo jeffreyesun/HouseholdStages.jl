@@ -23,8 +23,8 @@ using HouseholdStages
 
 # State: income z (2 levels) × location ℓ (3 locations). The choice is location.
 layout = GriddedLayout(
-    StateAxis(:income,   discrete_finite([0.6, 1.4])),
-    StateAxis(:location, categorical([:A, :B, :C])),
+    :income   => Discrete([0.6, 1.4]),
+    :location => Discrete([:A, :B, :C]),
 )
 
 ε = 0.8
@@ -35,10 +35,10 @@ C = [0.0 0.5 0.7;     # cost of moving origin → destination (origin-dependent!
 # A destination value that depends on the *whole* cell: location B is worth more
 # to high-income households, C more to low-income — a state-dependent payoff
 # that a bare cost matrix can't express, but a UtilityStage can.
-dest_value(cell; env) = cell.location === :B ? 0.8 * cell.income :
-                        cell.location === :C ? 0.6 / cell.income : 0.0
+dest_value(; location, income) = location === :B ? 0.8 * income :
+                                 location === :C ? 0.6 / income : 0.0
 
-choice = LogitChoiceStage(layout; choice_axis = :location, cost_matrix = C, ε = ε)
+choice = LogitChoiceStage(layout; axis = :location, cost_matrix = C, ε = ε)
 value  = UtilityStage(layout; utility = dest_value)
 chain  = choice ∘ value          # logit over (V_end + dest_value)
 
@@ -57,7 +57,7 @@ expected = [ε * log(sum(exp((-C[i, j] + u(j, z_grid[zi]) + V_end[zi, j]) / ε) 
 
 # This composition is packaged as the derived `LogitUtilityStage`, so the same
 # state-dependent logit is one constructor call — `choice ∘ value` under the hood.
-packaged = LogitUtilityStage(layout; choice_axis = :location, cost_matrix = C,
+packaged = LogitUtilityStage(layout; axis = :location, cost_matrix = C,
                              utility = dest_value, ε = ε)
 V_pre_packaged = backward!(packaged, V_end, NamedTuple())
 @assert V_pre_packaged == V_pre

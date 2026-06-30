@@ -6,14 +6,14 @@ using HouseholdStages
 
 @testset "SectorSwitchingStage — backward matches the logit closed form" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(collect(range(0.0, 1.0; length = 3)))),
-        StateAxis(:sector, categorical([:ag, :mfg, :svc])),
+        :wealth => GriddedContinuous(collect(range(0.0, 1.0; length = 3))),
+        :sector => Discrete([:ag, :mfg, :svc]),
     )
     C = [0.0 0.4 0.6;
          0.4 0.0 0.4;
          0.6 0.4 0.0]
     ε = 0.7
-    stage = SectorSwitchingStage(layout; sector_axis = :sector, switching_cost = C, ε = ε)
+    stage = SectorSwitchingStage(layout; axis = :sector, switching_cost = C, ε = ε)
 
     n_w, n_s = axissize.(layout.axes)
     V_end = Float64[0.1 * w + 0.2 * s for w in 1:n_w, s in 1:n_s]
@@ -29,13 +29,13 @@ end
 
 @testset "SectorSwitchingStage — equals MigrationStage with the same cost" begin
     # Same primitive, different axis name: identical numerics.
-    layout_s = GriddedLayout(StateAxis(:wealth, continuous_grid([0.0, 1.0])),
-                           StateAxis(:sector, categorical([:a, :b])))
-    layout_l = GriddedLayout(StateAxis(:wealth, continuous_grid([0.0, 1.0])),
-                           StateAxis(:location, categorical([:a, :b])))
+    layout_s = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0]),
+                           :sector => Discrete([:a, :b]))
+    layout_l = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0]),
+                           :location => Discrete([:a, :b]))
     C = [0.0 0.5; 0.5 0.0]
-    sec = SectorSwitchingStage(layout_s; sector_axis = :sector, switching_cost = C, ε = 1.3)
-    mig = MigrationStage(layout_l; location_axis = :location, migration_cost = C, ε = 1.3)
+    sec = SectorSwitchingStage(layout_s; axis = :sector, switching_cost = C, ε = 1.3)
+    mig = MigrationStage(layout_l; axis = :location, migration_cost = C, ε = 1.3)
     V = randn(2, 2)
     @test backward!(sec, V, NamedTuple()) ≈ backward!(mig, V, NamedTuple()) atol = 1e-14
 end

@@ -16,7 +16,7 @@
 # constant cost ⇒ one matmul, dep-varying ⇒ a batched matmul over the dep batch.
 
 """
-Logit (Gumbel) choice over a discrete `choice_axis`, with origin→destination
+Logit (Gumbel) choice over a discrete `axis`, with origin→destination
 friction `cost_matrix[i, j]`:
 
     π(j|i,s) = softmax_j( (−C[i,j] + V_end[j,s]) / ε ).
@@ -30,13 +30,13 @@ before this one; only the origin-dependent cost lives here.
 # resolved each backward OR a dep-declaring closure. The choice-axis size (from the layout, not
 # the cost) sizes the kernel, so allocation works even when the cost is env-supplied / closure-built.
 struct LogitChoiceStageSpec{Cmat, T} <: AbstractStageSpec
-    choice_axis :: Symbol
+    axis :: Symbol
     cost_matrix :: Cmat                                    # C[origin, dest]: a Matrix, FromEnv, or closure (; dep…, env) -> C
-    ε           :: T                                       # Gumbel scale (literal or FromEnv)
+    ε           :: T                                       # Gumbel scale (literal or FromEnv). ε < 0 ⇒ soft-MIN (robust)
 end
 
-LogitChoiceStageSpec(; choice_axis::Symbol, cost_matrix, ε = 1.0) =
-    LogitChoiceStageSpec{typeof(cost_matrix), typeof(ε)}(choice_axis, cost_matrix, ε)
+LogitChoiceStageSpec(; axis::Symbol, cost_matrix, ε = 1.0) =
+    LogitChoiceStageSpec{typeof(cost_matrix), typeof(ε)}(axis, cost_matrix, ε)
 
 @definestage LogitChoiceStage LogitChoiceStageSpec
 
@@ -45,66 +45,39 @@ LogitChoiceStageSpec(; choice_axis::Symbol, cost_matrix, ε = 1.0) =
 # Gridded implementation #
 ##########################
 
-# LogitChoiceKernel — the Gumbel-logit transition's data #
-#-------------------------------------------------------#
-# The kernel IS the frozen `eψC = exp(−C/ε)` (a dense self-describing kernel) and the per-state
-# `value_weight` (w) and `normalizer` (Z) buffers — nothing else. The transition is the
-# Gibbs/Luce operator `π(j|i,s) = eψC[i,j]·w[j,s]/Z[i,s]`; its two verbs reuse the dense
-# contraction (`forward!`/`backward!` on `eψC`) over the dep batch, never the dense origin×dest
-# tensor. `backward!` seats all three; `forward!` and the Jacobian adjoints reuse them.
+# The Gumbel-logit transition's data lives in `LogitChoiceKernel` (kernels/logit_kernel.jl); the
+# stage methods below build, seat, and read it.
 
-"""
-The Gumbel-logit transition's data: the frozen `eψC = exp(−C/ε)` (a dense self-describing
-kernel over `(origin, dest, deps…)`) and the per-(dest, state)/(origin, state) `value_weight`
-and `normalizer` buffers — both full layout-shaped — seated by the stage `backward!`. The
-operator is the Gibbs/Luce form `π(j|i,s) = eψC[i,j]·value_weight[j,s]/normalizer[i,s]`.
-"""
-struct LogitChoiceKernel{M<:AbstractArray, D<:AbstractArray}
-    eψC          :: M    # exp(−C/ε): dense kernel over (origin, dest, deps…)
-    value_weight :: D    # exp((V−maxⱼV)/ε)[j,s]: per-(dest, state) softmax numerator, layout-shaped
-    normalizer   :: D    # (Σⱼ eψC[i,j]·value_weight[j,s])[i,s]: per-(origin, state) denominator, layout-shaped
-end
+# Rectangular cost (origin ≠ dest, e.g. origin = 1 = the log-sum-exp collapse): the origin/`V_start`
+# side resizes to the cost's origin dim. General — square is the no-op `n_origin == n_dest`.
+input_layout(spec::LogitChoiceStageSpec, layout::GriddedLayout) =
+    resize_axis(layout, spec.axis, _field_shape(spec.cost_matrix, layout, spec.axis)[1])
 
 function allocate_kernel(spec::LogitChoiceStageSpec, ::Type{T}, layout::GriddedLayout) where {T}
-    eψC = dense_kernel(T, layout, spec.choice_axis, spec.cost_matrix)
-    return LogitChoiceKernel(eψC, allocate_buffer(layout, T), allocate_buffer(layout, T))
+    eψC    = dense_kernel(T, layout, spec.axis, spec.cost_matrix)
+    kernel = LogitChoiceKernel(eψC, allocate_buffer(layout, T),                       # value_weight (dest side)
+                                    allocate_buffer(input_layout(spec, layout), T))   # normalizer (origin side)
+    if !(reads_env(spec.cost_matrix) || spec.ε isa FromEnv)                           # env-independent: seat eψC once
+        ε = spec.ε
+        fill_field!(eψC, MappedField(C -> exp.(.- C ./ ε), spec.cost_matrix), layout, spec.axis, nothing)
+    end
+    return kernel
 end
 
-"Scratch: the io buffers + the choice-axis row-max `rowmax` (a backward-seating buffer). The K/Kᵀ apply plan — the `eψC` gather scratch + `tmp` — is the kernel's `kernel_scratch`, merged in by `@definestage`."
+"Cache: the static env-dependence classification for the cost field `eψC = exp(−C/ε)` (computed once),
+so a fixed-env VFI loop seats it once (§5.3). Env-dependent iff the cost source reads env OR `ε` is
+`FromEnv` (the map bakes `ε` into the field); an env-independent field is seated at construction."
+allocate_cache(spec::LogitChoiceStageSpec, ::Type, ::GriddedLayout) =
+    (cost_env_dep = reads_env(spec.cost_matrix) || spec.ε isa FromEnv,)
+
+"Scratch: the io buffers + the choice-axis row-max `rowmax` (a backward-seating buffer)."
 function allocate_scratch(spec::LogitChoiceStageSpec, ::Type{T}, layout::GriddedLayout) where {T}
-    rowmax = zeros(T, Base.setindex(layout_size(layout), 1, axis_position(layout, spec.choice_axis)))
+    rowmax = zeros(T, Base.setindex(layout_size(layout), 1, axis_position(layout, spec.axis)))
     return merge(io_scratch(spec, layout, T), (rowmax = rowmax,))
 end
 
-"The logit kernel's apply plan: the `eψC` dense kernel's gather scratch + the `tmp` buffer the composite K/Kᵀ verbs stage the diagonal scalings through."
-kernel_scratch(k::LogitChoiceKernel, layout::GriddedLayout, ::Type{T}) where {T} =
-    merge(kernel_scratch(k.eψC, layout, T), (tmp = allocate_buffer(layout, T),))
-
-# The Gibbs/Luce operator `K = diag(value_weight)·eψCᵀ·diag(1/normalizer)` and its transpose, as
-# the kernel's two verbs — `forward! = K·`, `backward! = Kᵀ·`. The primal mass push AND the lift
-# adjoints both route through these (the seated `value_weight`/`normalizer` make K the frozen
-# choice-probability operator, envelope theorem). The `eψC` contraction gathers internally; `tmp`
-# (the apply plan) stages the diagonal scalings.
-
-"""
-Apply `K· = value_weight ⊙ (eψCᵀ·(src ./ normalizer))` (the Gibbs mass-push operator).
-"""
-function forward!(dest, k::LogitChoiceKernel, src; scratch)
-    @. scratch.tmp = src / k.normalizer
-    backward!(dest, k.eψC, scratch.tmp; scratch = scratch)      # eψCᵀ · (src ./ normalizer)
-    @. dest = k.value_weight * dest
-    return dest
-end
-
-"""
-Apply `Kᵀ· = (eψC·(value_weight ⊙ src)) ./ normalizer` (the value-pullback operator).
-"""
-function backward!(dest, k::LogitChoiceKernel, src; scratch)
-    @. scratch.tmp = k.value_weight * src
-    forward!(dest, k.eψC, scratch.tmp; scratch = scratch)       # eψC · (value_weight ⊙ src)
-    @. dest = dest / k.normalizer
-    return dest
-end
+# The kernel's apply plan (`kernel_scratch`) and its two verbs (`forward! = K·`, `backward! = Kᵀ·`,
+# the Gibbs operator) live with `LogitChoiceKernel` in kernels/logit_kernel.jl.
 
 # Backward / forward — the LSE directly (no Gibbs reward) #
 #--------------------------------------------------------#
@@ -121,15 +94,21 @@ end
 Logit backward: materialise `eψC = exp(−C/ε)`, the per-state `value_weight`/`normalizer`, and
 write `V_start = rm + ε·log(normalizer)` (the LSE) in layout order, seating the kernel for forward.
 """
+# Robust soft-MIN for free: a NEGATIVE `ε` gives the entropic-risk CE `ε·log Σⱼ eψC·exp(V_end/ε)`.
+# Shifting by `maxⱼ(V_end/ε)` is the right stability shift for either sign (the division flips the
+# order when `ε < 0`), so no branch is needed.
+
 function backward!(V_start, spec::LogitChoiceStageSpec, layout::GriddedLayout, V_end;
-                   env, kernel, scratch, cache)
+                   env, kernel, scratch, cache, env_changed::Bool = true)
     ε  = resolve(spec.ε, env)
     (; eψC, value_weight, normalizer) = kernel
-    fill_field!(eψC, MappedField(C -> exp.(.- C ./ ε), spec.cost_matrix), layout, spec.choice_axis, env)
-    maximum!(scratch.rowmax, V_end)                                          # rm[s] = maxⱼ V_end[j,s] (reduces the size-1 choice axis)
-    @. value_weight = exp((V_end - scratch.rowmax) / ε)                       # softmax numerator
+    cache.cost_env_dep && env_changed &&                                     # seat eψC (static refill)
+        fill_field!(eψC, MappedField(C -> exp.(.- C ./ ε), spec.cost_matrix), layout, spec.axis, env)
+    @. value_weight = V_end / ε                                              # scaled continuation u = V_end/ε
+    maximum!(scratch.rowmax, value_weight)                                   # m = maxⱼ u — the sign-correct stability shift
+    @. value_weight = exp(value_weight - scratch.rowmax)                     # exp(u − m) ∈ (0,1] for either sign of ε
     forward!(normalizer, eψC, value_weight; scratch = scratch.kernel_scratch) # normalizer = eψC·value_weight
-    @. V_start = scratch.rowmax + ε * log(normalizer)                         # the LSE, directly
+    @. V_start = ε * (scratch.rowmax + log(normalizer))                      # ε·(m + log Z): the LSE / entropic-risk CE
     return (V_start, kernel)
 end
 

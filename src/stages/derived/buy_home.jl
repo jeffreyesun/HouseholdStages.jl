@@ -3,38 +3,35 @@
 # *price* is not deducted here; it composes as a following WealthChangeStage.
 
 """
-Index of housing value `action` within the axis `values` — the chosen
-housing index for `next_state_idx`.
+Lower a value-gated housing/tenure choice to a reward matrix source via `to_matrix_source`
+(end-goal §4.1): the start-and-end `payoff` takes the origin/destination axis GRID VALUES
+POSITIONALLY and gates inline — `avail(origin, destination)` infeasible moves score `-Inf`, available
+ones the per-size `flow_payoff` shifter (`0` if none). No bespoke `(after, before)` matrix.
 """
-_housing_index(values, action) = findfirst(==(action), values)::Int
+function _gate_reward(layout::GriddedLayout, axis::Symbol, avail, flow_payoff)
+    payoff = (origin, destination; env) ->
+        avail(origin, destination) ? (flow_payoff === nothing ? 0.0 : flow_payoff(destination; env)) : -Inf
+    return to_matrix_source(payoff, layout, axis)
+end
 
 """
 Buy-home stage — an [`ArgmaxStage`](@ref) on a housing axis encoding the
 homebuying choice. A cell at the renter level (`renter_index`, default `1`)
 may choose any housing size; a homeowner (`h ≥ 2`) may only keep its own `h`.
 
-The purchase price is **not** deducted here — like [`MigrationStage`](@ref)
+The reward is the `(after, before)` gate matrix on the housing axis (available moves score `0`,
+unavailable `-Inf`). The purchase price is **not** deducted here — like [`MigrationStage`](@ref)
 carrying only the move cost, the wealth consequence composes as a following
-[`WealthChangeStage`](@ref) that reads `cell.<housing_axis>`. `flow_payoff`
-defaults to zero on available actions; pass one to add a per-size shifter.
+[`WealthChangeStage`](@ref) that reads `cell.<axis>`. `flow_payoff`, if given, is a
+per-size shifter `(housing_value; env) -> Float64` on the available entries (a destination payoff
+is V-additive, so it may equally be a composed [`UtilityStage`](@ref)).
 """
-function BuyHomeStage(layout::GriddedLayout; housing_axis::Symbol=:h,
+function BuyHomeStage(layout::GriddedLayout; axis::Symbol=:h,
                       renter_index::Int=1, flow_payoff=nothing)
-    values = axisvalues(layout.axes[axis_position(layout, housing_axis)])
-    renter = values[renter_index]
-    own    = getproperty                       # cell.<housing_axis>
-    fp = flow_payoff === nothing ?
-        # Renters: every action available (payoff 0). Owners: only their own h.
-        ((cell, action; env) ->
-            own(cell, housing_axis) == renter ? 0.0 :
-            (action == own(cell, housing_axis) ? 0.0 : -Inf)) :
-        # Custom payoff, but still gate owners to their own h (pass-through).
-        ((cell, action; env) ->
-            own(cell, housing_axis) == renter ? flow_payoff(cell, action; env) :
-            (action == own(cell, housing_axis) ? flow_payoff(cell, action; env) : -Inf))
-    return ArgmaxStage(layout;
-        choice_axis    = housing_axis,
-        flow_payoff    = fp,
-        next_state_idx = (cell, action) -> _housing_index(values, action),
-    )
+    # The renter level is identified by its grid VALUE (the axis is injective; cf. the `h == 0.0`
+    # idiom in the housing examples), so the index-positional gate reads over grid values.
+    renter = axis_grid(layout, axis)[renter_index]
+    avail  = (origin, destination) -> origin == renter || destination == origin
+    reward = _gate_reward(layout, axis, avail, flow_payoff)
+    return ArgmaxStage(layout; axis = axis, reward)
 end

@@ -47,14 +47,6 @@ Base.Broadcast.broadcastable(p::MITShockParams) = Ref(p)
 const mit_shock_params = MITShockParams()
 
 
-# Utility #
-#---------#
-
-_u_crra(c, ::Union{Val{1}, Val{1.0}}) = log(c)
-_u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
-u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
-
-
 # Household chain assembly #
 #--------------------------#
 
@@ -65,22 +57,16 @@ the steady-state example).
 """
 function aiyagari_household(p = mit_shock_params)
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(p.w_min, p.w_max;
-                                           length = p.N_w, spacing = :log)),
-        StateAxis(:income, p.y_grid),
+        :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income => Discrete(p.y_grid),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
-    receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis = :wealth,
-    )
+    receipt = IncomeStage(layout) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
-        β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
-        monotone_search = :divide_conquer,
-    )
+        β       = p.β,
+        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;

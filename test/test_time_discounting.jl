@@ -3,8 +3,8 @@ using HouseholdStages
 
 @testset "TimeDiscountingStage — backward scales V_end by β" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:income, discrete_finite([0.5, 1.0])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :income => Discrete([0.5, 1.0]),
     )
     stage = TimeDiscountingStage(layout; β = 0.96)
 
@@ -14,14 +14,14 @@ using HouseholdStages
 end
 
 @testset "TimeDiscountingStage — default β = 1 is identity on V" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([1, 2, 3])))
+    layout = GriddedLayout(:z => Discrete([1, 2, 3]))
     stage = TimeDiscountingStage(layout)
     V_end = [10.0, 20.0, 30.0]
     @test backward!(stage, V_end, nothing) ≈ V_end
 end
 
 @testset "TimeDiscountingStage — β from env (FromEnv)" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([1, 2, 3])))
+    layout = GriddedLayout(:z => Discrete([1, 2, 3]))
     stage = TimeDiscountingStage(layout; β = FromEnv(:β))
     @test effective_env_slice(stage) == (:β,)
 
@@ -32,8 +32,8 @@ end
 
 @testset "TimeDiscountingStage — forward is identity on Λ" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 0.5, 1.0])),
-        StateAxis(:z, categorical([:a, :b])),
+        :w => GriddedContinuous([0.0, 0.5, 1.0]),
+        :z => Discrete([:a, :b]),
     )
     stage = TimeDiscountingStage(layout; β = 0.9)
     Λ_start = rand(3, 2); Λ_start ./= sum(Λ_start)
@@ -47,8 +47,8 @@ end
     # ⟨V_in, Λ_in⟩ = ⟨V_out, Λ_out⟩ + ⟨r, Λ_in⟩ with Λ_out = Λ_in and
     # V_in = β·V_out, so r = V_in - V_out = (β-1)·V_out.
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:income, discrete_finite([0.5, 1.0, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :income => Discrete([0.5, 1.0, 1.5]),
     )
     β = 0.94
     stage = TimeDiscountingStage(layout; β = β)
@@ -68,8 +68,8 @@ end
     # ⟨backward!(V_end), dV_start⟩ = ⟨V_end, backward_adjoint!(dV_start)⟩
     # since backward K = β·Id is linear and self-adjoint up to the scalar.
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z,      discrete_finite([0.5, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     β = 0.97
     stage = TimeDiscountingStage(layout; β = β)
@@ -91,9 +91,9 @@ end
 end
 
 @testset "TimeDiscountingStage — composes with UtilityStage (β·V + u)" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([1.0, 2.0, 3.0])))
+    layout = GriddedLayout(:z => Discrete([1.0, 2.0, 3.0]))
     discount = TimeDiscountingStage(layout; β = 0.5)
-    util     = UtilityStage(layout; utility = (cell; env) -> cell.z)
+    util     = UtilityStage(layout; utility = (; z) -> z)
 
     # `∘` is left-to-right time-ordered, so the backward sweep runs the
     # rightmost stage (util) first then discount: V_start = 0.5·(z + 0) = 0.5·z.
@@ -103,7 +103,7 @@ end
 end
 
 @testset "TimeDiscountingStage — static_env_deps empty by default" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([1, 2])))
+    layout = GriddedLayout(:z => Discrete([1, 2]))
     plain = TimeDiscountingStage(layout; β = 0.9)
     @test effective_env_slice(plain) == ()
 end

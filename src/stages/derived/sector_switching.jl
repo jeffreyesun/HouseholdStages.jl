@@ -9,5 +9,5 @@ to `j` (zero diagonal = free to stay). Same mechanics as
 [`MigrationStage`](@ref); sector-specific values (and any destination amenity)
 enter through `V_end` via composed `UtilityStage`s.
 """
-SectorSwitchingStage(layout::GriddedLayout; sector_axis::Symbol=:sector, switching_cost, ε=1.0) =
-    LogitChoiceStage(layout; choice_axis=sector_axis, cost_matrix=switching_cost, ε=ε)
+SectorSwitchingStage(layout::GriddedLayout; axis::Symbol=:sector, switching_cost, ε=1.0) =
+    LogitChoiceStage(layout; axis=axis, cost_matrix=switching_cost, ε=ε)

@@ -5,14 +5,14 @@ using HouseholdStages
 # level, indices ≥ 2 are owned sizes.
 function _sell_layout(; n_w = 3, h_levels = [0.0, 1.0, 2.0])
     return GriddedLayout(
-        StateAxis(:wealth, continuous_grid(collect(range(0.0, 1.0; length = n_w)))),
-        StateAxis(:h,      discrete_finite(h_levels)),
+        :wealth => GriddedContinuous(collect(range(0.0, 1.0; length = n_w))),
+        :h => Discrete(h_levels),
     )
 end
 
 @testset "SellHomeStage — owners choose keep vs sell, renters pass through" begin
     layout = _sell_layout()
-    stage = SellHomeStage(layout; housing_axis = :h)
+    stage = SellHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     # Renting (index 1) strictly dominates ⇒ every owner sells.
@@ -37,7 +37,7 @@ end
 
 @testset "SellHomeStage — gate: an owner can only keep or become a renter" begin
     layout = _sell_layout()
-    stage = SellHomeStage(layout; housing_axis = :h)
+    stage = SellHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     # Size 3 (index 3) looks best, but an owner of size 2 may NOT switch to it —
@@ -58,7 +58,7 @@ end
 
 @testset "SellHomeStage — forward: sellers collapse to renter slice, mass conserved" begin
     layout = _sell_layout()
-    stage = SellHomeStage(layout; housing_axis = :h)
+    stage = SellHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     V_end = zeros(n_w, n_h)
@@ -79,7 +79,7 @@ end
 
 @testset "SellHomeStage — forward mass conservation on a full distribution" begin
     layout = _sell_layout(; n_w = 4, h_levels = [0.0, 1.0, 2.0, 3.0])
-    stage = SellHomeStage(layout; housing_axis = :h)
+    stage = SellHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     V_end = randn(n_w, n_h)
@@ -97,10 +97,10 @@ end
     # bump on renters as a stand-in (the real model carries pre-sell size on a
     # separate axis); the test only checks the chain runs and conserves mass.
     layout = _sell_layout(; n_w = 5, h_levels = [0.0, 1.0, 2.0])
-    sell  = SellHomeStage(layout; housing_axis = :h)
+    sell  = SellHomeStage(layout; axis = :h)
     fee   = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> cell.h == 0.0 ? cell.wealth + env.proceeds : cell.wealth,
-        wealth_axis = :wealth,
+        wealth_post = (; h, wealth, env) -> h == 0.0 ? wealth + env.proceeds : wealth,
+        axis = :wealth,
     )
     chain = sell ∘ fee
     n_w, n_h = axissize.(layout.axes)

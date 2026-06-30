@@ -16,11 +16,19 @@ _to_device_field(x::AbstractArray, move_fn) =
     isbitstype(eltype(x)) ? move_fn(x) : x
 _to_device_field(x, move_fn) = x
 
-# A dense self-describing kernel is a `PermutedDimsArray`: move its compact parent and
-# rewrap with the same presentation perm (the generic array path would materialise it
-# dense on the device, losing the compact-parent layout the contraction relies on).
-_to_device_field(M::PermutedDimsArray{T, N, perm}, move_fn) where {T, N, perm} =
-    PermutedDimsArray(_to_device_field(parent(M), move_fn), perm)
+# A `MatrixField` / `DenseKernel` move their compact backing array onto the device, preserving the
+# explicit operative-axis/dep metadata (host-side scalars). The wrappers are NOT `AbstractArray`s,
+# so the generic array path above does not catch them — these explicit methods are required.
+_to_device_field(f::MatrixField, move_fn) =
+    MatrixField(_to_device_field(f.array, move_fn), f.operative_axis, f.operative_dim, f.dep_dims)
+_to_device_field(k::DenseKernel, move_fn) = DenseKernel(_to_device_field(k.field, move_fn))
+
+# A `ScalarField` (the deterministic-continuous destination cache, utility/entry payoff) moves its
+# materialized `data` buffer onto the device, keeping the host-side `bshape`/`env_dependent` metadata.
+# A later env-dependent refill then lands on-device through `fill_scalar_field!`'s host-staged copy
+# (fields/scalar_field.jl) — the wrapper is NOT an `AbstractArray`, so this explicit method is required.
+_to_device_field(f::ScalarField, move_fn) =
+    (d = _to_device_field(f.data, move_fn); ScalarField{typeof(d)}(d, f.bshape, f.env_dependent))
 
 """
 Rebuild a kernel/scratch struct (or `nothing`) with each field moved. Reconstructs
@@ -45,18 +53,21 @@ _struct_to_device(nt::NamedTuple, move_fn) =
 # is moved field-by-field — without this the inner plan would pass through host-side.
 _to_device_field(nt::NamedTuple, move_fn) = _struct_to_device(nt, move_fn)
 
-# Each kernel type moves its own data fields (dispatched below); the dense PermutedDimsArray
+# Each kernel type moves its own data fields (dispatched below); the dense `DenseKernel`/`MatrixField`
 # and the scalar transitions (`I`/`BackwardScale`) are handled by the methods above / the
 # generic `_to_device_field` pass-through.
 
-# The single-destination kernel is its `destinations` array + its `axis` Val (host-side) — move
-# the destinations, keep the axis (the grid lives in the kernel_scratch plan, moved by the
-# NamedTuple mover above).
-_to_device_field(k::SingleDestinationKernel, move_fn) =
-    SingleDestinationKernel(_to_device_field(k.destinations, move_fn), k.axis)
+# The single-destination kernels own a `DestinationField` (a `destinations` array + an `axis` Val,
+# host-side) — move the destinations, keep the axis (the grid, for `InterpKernel`, lives in the
+# kernel_scratch plan, moved by the NamedTuple mover above). One mover serves both kernel types via
+# the shared field.
+_to_device_field(f::DestinationField, move_fn) =
+    DestinationField(_to_device_field(f.destinations, move_fn), f.axis)
+_to_device_field(k::ScatterKernel, move_fn) = ScatterKernel(_to_device_field(k.dest, move_fn))
+_to_device_field(k::InterpKernel, move_fn)  = InterpKernel(_to_device_field(k.dest, move_fn))
 
-# The logit kernel is its eψC/value_weight/normalizer factors — move them (eψC is a dense
-# PermutedDimsArray, routed through the parent-aware mover above; the gather work-buffers live
+# The logit kernel is its eψC/value_weight/normalizer factors — move them (eψC is a contained
+# `DenseKernel`, routed through the DenseKernel mover above; the gather work-buffers live
 # in scratch, moved by the scratch NamedTuple mover).
 _to_device_field(k::LogitChoiceKernel, move_fn) =
     LogitChoiceKernel(_to_device_field(k.eψC, move_fn),
@@ -67,6 +78,16 @@ _to_device_field(k::LogitChoiceKernel, move_fn) =
 _to_device_field(k::SearchMatchingKernel, move_fn) =
     SearchMatchingKernel(_to_device_field(k.policy, move_fn),
                          _to_device_field(k.p, move_fn), k.δ)
+
+# The streaming kernel-choice kernels (`MPSKernel`/`MeanVarianceKernel`) move only their per-cell
+# frozen float policy `θstar` to the device; the small host-side `grid`/`weights`/`landing` vectors
+# are device-promoted at the seam (`HouseholdStagesCUDAExt`, like the WealthChange wgrid) and `adim`
+# is a scalar. Without these the generic struct pass-through would leave `θstar` host and the device
+# backward/forward would scalar-index.
+_to_device_field(k::MPSKernel, move_fn) =
+    MPSKernel(_to_device_field(k.θstar, move_fn), k.grid, k.weights, k.adim, k.landing)
+_to_device_field(k::MeanVarianceKernel, move_fn) =
+    MeanVarianceKernel(_to_device_field(k.θstar, move_fn), k.grid, k.weights, k.adim, k.landing)
 
 """
 Move a Spec's array fields to the device (Markov/Logit `mul!` them against device
@@ -100,6 +121,56 @@ function to_device(stage::AbstractModernStage, move_fn)
         _struct_to_device(stage.scratch, move_fn),
         _struct_to_device(stage.cache, move_fn),
     )
+end
+
+"""
+Move a composite (`ChainStage`) onto the device: move each leaf sub-stage and rebundle through the
+`∘`-time-ordered constructor. The chain's backward/forward sweeps drive `buffer.stages` directly, so
+moving those (and re-deriving the spec/layouts from them) is the whole move; the layouts stay
+host-side.
+"""
+to_device(stage::ChainStage, move_fn) =
+    ChainStage(map(s -> to_device(s, move_fn), stage.buffer.stages))
+
+"""
+Move a `ProductStage` (the `⊕` direct sum) onto the device. Mirrors the `ChainStage` lift —
+recursively move each bundled component sub-stage and keep the host-side layouts — with one extra
+step: a `ProductStageBuffer` *owns* its fused `V`/`Λ` tensors (a `ChainStageBuffer` owns none), and
+the per-component sweep slices each component's result into them, so they must ride along to the
+device too. The spec (host-side component sub-specs, read only for `axis`/count in the sweep) is
+carried unchanged. The buffer's array fields are `<:AbstractArray`-typed (direct_sum.jl) so the
+device-resident fused tensors land without a host round-trip.
+"""
+function to_device(stage::ProductStage, move_fn)
+    buf   = stage.buffer
+    comps = map(s -> to_device(s, move_fn), buf.components)
+    dbuf  = ProductStageBuffer(comps,
+                               _to_device_field(buf.V_fused, move_fn),
+                               _to_device_field(buf.Λ_fused, move_fn),
+                               buf.input_layout, buf.output_layout)
+    return ProductStage(stage.spec, dbuf)
+end
+
+"""
+Move a `MixingStage` (and its `RetentionStage` `K_A = I` special case) onto the device. The two
+blended transitions live in the bundled `markA`/`markB` MarkovStages — recurse `to_device` into each
+(the modern dense `mul!` path) — and the buffer's own policy/mass-split/V_start/Λ_end scratch rides
+along. The spec stays host-side: its `K_A`/`K_B` matrices are read only at allocate-time (the seated
+kernels live in the sub-stages), and its pointwise `conjugate`/`policy`/`cost` closures broadcast
+on-device over the device arrays. The buffer's scratch fields are `<:AbstractArray`-typed
+(mixing.jl) so the device tensors land without a host round-trip.
+"""
+function to_device(stage::MixingStage, move_fn)
+    buf  = stage.buffer
+    dbuf = MixingStageBuffer(
+        to_device(buf.markA, move_fn),
+        to_device(buf.markB, move_fn),
+        _to_device_field(buf.policy, move_fn),
+        _to_device_field(buf.mass_share, move_fn),
+        _to_device_field(buf.V_start, move_fn),
+        _to_device_field(buf.Λ_end, move_fn),
+        buf.input_layout, buf.output_layout)
+    return MixingStage(stage.spec, dbuf)
 end
 
 """

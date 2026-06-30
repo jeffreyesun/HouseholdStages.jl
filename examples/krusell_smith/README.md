@@ -27,20 +27,19 @@ income process.
 ```julia
 function ks_household(p = ks_params)
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(p.w_min, p.w_max;
-                                           length = p.N_w, spacing = :log)),
-        StateAxis(:income, p.y_grid),
+        :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income => Discrete(p.y_grid),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis = :wealth,
+        wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income,
+        axis = :wealth,
     )
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
         utility         = (cell, c; env) -> u_crra(c, Val(p.γ)),
-        wealth_axis     = :wealth,
+        axis            = :wealth,
         monotone_search = :divide_conquer,
     )
 

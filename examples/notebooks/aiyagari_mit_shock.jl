@@ -38,27 +38,19 @@ using Printf
 end
 Base.Broadcast.broadcastable(p::MITShockParams) = Ref(p)
 
-_u_crra(c, ::Val{1}) = log(c)
-_u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
-u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
+# CRRA felicity `u_crra` is provided by HouseholdStages.
 
 function aiyagari_household(p::MITShockParams)
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(p.w_min, p.w_max;
-                                           length = p.N_w, spacing = :log)),
-        StateAxis(:income, p.y_grid),
+        :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income => Discrete(p.y_grid),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
-    receipt = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis = :wealth,
-    )
-    savings = ConsumptionSavingsStage(layout;
-        β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
-        monotone_search = :divide_conquer,
+    receipt = IncomeStage(layout)               # (1+r)·wealth + w·income, the standard receipt
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+        β       = p.β,
+        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
     )
     return define_moments!(shock ∘ receipt ∘ savings;
         K_supplied = at_end(integrand = :wealth, reduce = sum),

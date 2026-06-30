@@ -3,8 +3,8 @@ using HouseholdStages
 
 @testset "BorrowingConstraintStage — array mask sets V to -Inf on infeasible cells" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
-        StateAxis(:y,      [0.5, 1.0]),
+        :wealth => GriddedContinuous([-1.0, 0.0, 1.0, 2.0]),
+        :y => Discrete([0.5, 1.0]),
     )
     mask = falses(4, 2)
     mask[1, :] .= true   # wealth = -1 infeasible
@@ -20,8 +20,8 @@ end
 
 @testset "BorrowingConstraintStage — forward is identity on Λ" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z,      [1, 2]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([1, 2]),
     )
     mask = falses(3, 2); mask[1, :] .= true
     stage = BorrowingConstraintStage(layout; infeasible = mask)
@@ -35,13 +35,13 @@ end
 
 @testset "BorrowingConstraintStage — closure form materialises mask from env" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
-        StateAxis(:y,      [0.5, 1.0]),
+        :wealth => GriddedContinuous([-1.0, 0.0, 1.0, 2.0]),
+        :y => Discrete([0.5, 1.0]),
     )
     # State + env-dependent constraint: infeasible if wealth < env.w_min.
     # env is passed directly to the closure (no Ref wrapping).
     stage = BorrowingConstraintStage(layout;
-        infeasible = (cell; env) -> cell.wealth < env.w_min,
+        infeasible = (; wealth, env) -> wealth < env.w_min,
     )
 
     V_end = reshape(Float64.(1:8), (4, 2))
@@ -60,13 +60,13 @@ end
 
 @testset "BorrowingConstraintStage — closure and array forms agree" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:y,      [0.5, 1.0, 1.5]),
+        :wealth => GriddedContinuous([-1.0, 0.0, 1.0, 2.0, 3.0]),
+        :y => Discrete([0.5, 1.0, 1.5]),
     )
     mask = [w < 0.0 for w in [-1.0, 0.0, 1.0, 2.0, 3.0], y in [0.5, 1.0, 1.5]]
     stage_arr = BorrowingConstraintStage(layout; infeasible = mask)
     stage_fn  = BorrowingConstraintStage(layout;
-        infeasible = (cell; env) -> cell.wealth < 0.0,
+        infeasible = (; wealth) -> wealth < 0.0,
     )
 
     V_end = randn(5, 3)
@@ -77,8 +77,8 @@ end
 
 @testset "BorrowingConstraintStage — duality identity (excluding -Inf cells)" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:y,      [0.5, 1.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :y => Discrete([0.5, 1.0]),
     )
     mask = falses(4, 2); mask[1, :] .= true
     stage = BorrowingConstraintStage(layout; infeasible = mask)
@@ -96,8 +96,8 @@ end
 @testset "BorrowingConstraintStage — composition with MarkovStage" begin
     P = [0.7 0.3; 0.3 0.7]
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
-        StateAxis(:z,      [0.5, 1.5]),
+        :wealth => GriddedContinuous([-1.0, 0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     markov = MarkovStage(layout; axis = :z, transition_matrix = P)
     mask   = falses(4, 2); mask[1, :] .= true
@@ -112,8 +112,8 @@ end
 
 @testset "BorrowingConstraintStage — is a UtilityStage with no static env deps" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0])),
-        StateAxis(:y,      [0.5, 1.0]),
+        :wealth => GriddedContinuous([0.0, 1.0]),
+        :y => Discrete([0.5, 1.0]),
     )
     stage = BorrowingConstraintStage(layout; infeasible = falses(2, 2))
     @test stage isa UtilityStage
@@ -123,8 +123,33 @@ end
 
 @testset "BorrowingConstraintStage — shape check on the array form" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:y,      [0.5, 1.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :y => Discrete([0.5, 1.0]),
     )
     @test_throws AssertionError BorrowingConstraintStage(layout; infeasible = falses(4, 3))
+end
+
+@testset "_sup_norm_diff — skips non-finite differences (VFI convergence-norm fix)" begin
+    @test HouseholdStages._sup_norm_diff([1.0, -Inf, 3.0], [0.0, -Inf, 1.0]) == 2.0   # was NaN
+    @test HouseholdStages._sup_norm_diff([1.0, 2.0], [0.0, 0.0]) == 2.0               # all-finite unchanged
+    @test HouseholdStages._sup_norm_diff([-Inf, -Inf], [-Inf, -Inf]) == 0.0           # all-masked → 0
+end
+
+@testset "BorrowingConstraintStage — full VFI converges with a feasibility mask (regression)" begin
+    # Regression for the silent false-convergence bug: the constraint's `-Inf` cells made the
+    # sup-norm `maximum(abs, V_new .- V)` evaluate `-Inf - (-Inf) = NaN`, so `while NaN > tol`
+    # was false → VFI exited after ~2 passes returning converged=true. It must really iterate now.
+    P = [0.7 0.2 0.1; 0.2 0.6 0.2; 0.1 0.2 0.7]
+    layout = GriddedLayout(:wealth => GriddedContinuous(0.0, 60.0, 60; spacing = :log),
+                           :income => Discrete([0.6, 1.0, 1.4]))
+    shock   = MarkovStage(layout; axis = :income, transition_matrix = P)
+    receipt = IncomeStage(layout)
+    bc      = BorrowingConstraintStage(layout; infeasible = (; wealth) -> wealth < 2.0)
+    savings = ConsumptionSavingsStage(layout; β = 0.96, utility = (cell, c; env) -> u_crra(c, Val(1.5)))
+    hh  = bc ∘ shock ∘ receipt ∘ savings
+    res = solve_steady_state_given_env!(hh, (; r = 0.03, w = 1.0))
+    @test res.history.vfi_iters > 10        # really iterated (not the ~2-pass silent exit)
+    @test count(==(-Inf), res.V) > 0        # the mask is present
+    @test count(isfinite, res.V) > 0        # feasible region is finite
+    @test isfinite(sum(res.Λ)) && sum(res.Λ) > 0
 end

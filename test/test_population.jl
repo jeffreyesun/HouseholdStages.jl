@@ -4,8 +4,8 @@ using HouseholdStages: masses
 
 @testset "GriddedPopulation — wrap / unwrap / uniform" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z,      discrete_finite([0.5, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     Λ = uniform_distribution(layout)
     @test Λ isa GriddedPopulation
@@ -23,8 +23,8 @@ end
 @testset "forward! on a GriddedPopulation = the kernel acting on the distribution" begin
     P = [0.8 0.2; 0.3 0.7]
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z,      discrete_finite([0.5, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     stage = MarkovStage(layout; axis = :z, transition_matrix = P)
     backward!(stage, zeros(3, 2), nothing)                  # seat the kernel
@@ -39,7 +39,7 @@ end
 
 @testset "expectation ⟨f, Λ⟩ and V/Λ duality through populations" begin
     P = [0.8 0.2; 0.3 0.7]
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     stage = MarkovStage(layout; axis = :z, transition_matrix = P)
 
     V_end = randn(2)

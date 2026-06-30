@@ -30,7 +30,7 @@
 # `findmax` with a softmax over the same Q grid for SSJ Euler-smoothness.
 
 """
-Search-and-matching over a two-level labor axis (`labor_axis`: 1 = unemployed,
+Search-and-matching over a two-level labor axis (`axis`: 1 = unemployed,
 2 = employed). The unemployed choose search effort from `efforts`; effort `e` costs
 `cost(e)` and finds a job with probability `job_finding(e, θ)`, with tightness `θ`
 from `env` via `tightness`. The employed separate at rate `separation`. Backward
@@ -39,7 +39,7 @@ forward replays it. `efforts` is internal — effort is not a state axis (see th
 file header).
 """
 struct SearchMatchingStageSpec{F, J, Sep, Tθ} <: AbstractStageSpec
-    labor_axis  :: Symbol
+    axis  :: Symbol
     efforts     :: Vector{Float64}
     cost        :: F                       # cost(e) -> Real
     job_finding :: J                       # job_finding(e, θ) -> p ∈ [0,1]
@@ -47,9 +47,9 @@ struct SearchMatchingStageSpec{F, J, Sep, Tθ} <: AbstractStageSpec
     tightness   :: Tθ                      # θ scalar or FromEnv(:θ)
 end
 
-SearchMatchingStageSpec(; labor_axis::Symbol = :emp, efforts, cost, job_finding,
+SearchMatchingStageSpec(; axis::Symbol = :emp, efforts, cost, job_finding,
                           separation, tightness = FromEnv(:θ)) =
-    SearchMatchingStageSpec(labor_axis, collect(Float64, efforts), cost, job_finding,
+    SearchMatchingStageSpec(axis, collect(Float64, efforts), cost, job_finding,
                             separation, tightness)
 
 """
@@ -66,11 +66,11 @@ end
 # The labor axis must be exactly two levels (unemployed, employed); `x` is
 # everything else.
 _sam_x_layout(spec::SearchMatchingStageSpec, layout::GriddedLayout) =
-    drop_axis(layout, spec.labor_axis)
+    drop_axis(layout, spec.axis)
 
 function allocate_kernel(spec::SearchMatchingStageSpec, ::Type{T}, layout::GriddedLayout) where {T}
-    n_l = axissize(layout.axes[axis_position(layout, spec.labor_axis)])
-    @assert n_l == 2 "SearchMatchingStage: labor_axis `$(spec.labor_axis)` must have 2 levels (unemployed, employed), got $n_l"
+    n_l = axissize(layout.axes[axis_position(layout, spec.axis)])
+    @assert n_l == 2 "SearchMatchingStage: axis `$(spec.axis)` must have 2 levels (unemployed, employed), got $n_l"
     xsz = layout_size(_sam_x_layout(spec, layout))
     return SearchMatchingKernel(zeros(Int, xsz), zeros(T, xsz), Ref(0.0))
 end
@@ -86,40 +86,64 @@ end
 # the employed value is separation-only.
 
 function backward!(V_start, spec::SearchMatchingStageSpec, layout::GriddedLayout, V_out;
-                   env, kernel, scratch, cache)
-    (; labor_axis, efforts, cost, job_finding) = spec
+                   env, kernel, scratch, cache, env_changed::Bool = true)
+    (; axis, efforts, cost, job_finding) = spec
     (; policy, p) = kernel
-    Q  = scratch.Q
     θ  = resolve(spec.tightness, env)
     δ  = resolve(spec.separation, env)
+    ld = axis_position(layout, axis)
 
-    Vu = fix(V_out, layout, labor_axis => 1)   # unemployed continuation, on x
-    Ve = fix(V_out, layout, labor_axis => 2)   # employed continuation, on x
+    # Effort is internal: pre-evaluate the host closures on the effort grid (n_eff scalars) so the
+    # per-`x` reduction is pure arithmetic — and the device kernel need not run the host closures.
+    # Bit-identical to evaluating `cost(e)`/`job_finding(e, θ)` inline (same scalars).
+    cost_vec = cost.(efforts)
+    pe_vec   = job_finding.(efforts, θ)
+
+    _sam_backward_columns!(Val(ld), V_start, V_out, policy, p, scratch.Q,
+                           cost_vec, pe_vec, δ, Val(ndims(V_start)))
+    kernel.δ[] = δ                                 # cache δ so forward replays the env's rate
+    return (V_start, kernel)
+end
+
+"""
+Per-`x` effort argmax + separation mix — the CPU/GPU seam factored out of `backward!` (the GPU
+method lives in `HouseholdStagesCUDAExt`). With the labor axis `LD` fixed to its two levels, for
+each non-labor cell `x`:
+
+  `Vu_new = maxₖ (−cost[k] + pe[k]·Ve + (1−pe[k])·Vu)`, maximiser `k*` → `policy`,
+  `p = pe[k*]` cached for the forward replay, and `Ve_new = (1−δ)·Ve + δ·Vu`.
+
+The CPU path materialises the `(x…, n_eff)` scratch `Q` and `findmax`-reduces it (first-index
+tie-break); `cost_vec`/`pe_vec` are the host effort closures pre-evaluated on the grid.
+"""
+function _sam_backward_columns!(::Val{LD}, V_start, V_out, policy, p, Q,
+                                cost_vec, pe_vec, δ, ::Val{N}) where {LD, N}
+    Vu     = selectdim(V_out,   LD, 1)   # unemployed continuation, on x
+    Ve     = selectdim(V_out,   LD, 2)   # employed continuation, on x
+    Vu_new = selectdim(V_start, LD, 1)
+    Ve_new = selectdim(V_start, LD, 2)
 
     # Q[x, e] = −cost(e) + p(e,θ)·Ve(x) + (1−p(e,θ))·Vu(x), one effort slice at a time.
-    for (k, e) in enumerate(efforts)
-        pe = job_finding(e, θ)
-        Qk = selectdim(Q, ndims(Q), k)
-        @. Qk = -cost(e) + pe * Ve + (1 - pe) * Vu
+    edim = ndims(Q)
+    @inbounds for k in eachindex(cost_vec)
+        ck = cost_vec[k]; pe = pe_vec[k]
+        Qk = selectdim(Q, edim, k)
+        @. Qk = -ck + pe * Ve + (1 - pe) * Vu
     end
 
     # Hard choice: max over effort (trailing axis), keep the winning effort index.
-    edim = ndims(Q)
     best_v, best_ci = findmax(Q; dims = edim)
-    Vu_new = fix(V_start, layout, labor_axis => 1)
-    Ve_new = fix(V_start, layout, labor_axis => 2)
     Vu_new .= reshape(best_v, size(Vu_new))
     policy .= getindex.(reshape(best_ci, size(policy)), edim)
 
     # Cache p(e*(x), θ) at the chosen effort so forward replays the same row.
-    for ci in CartesianIndices(policy)
-        p[ci] = job_finding(efforts[policy[ci]], θ)
+    @inbounds for ci in CartesianIndices(policy)
+        p[ci] = pe_vec[policy[ci]]
     end
 
     # Employed: separation only (no choice). V_emp = (1−δ)·Ve + δ·Vu.
     @. Ve_new = (1 - δ) * Ve + δ * Vu
-    kernel.δ[] = δ                                 # cache δ so forward replays the env's rate
-    return (V_start, kernel)
+    return
 end
 
 # Forward: replay the effort policy — unemployed mass finds a job w.p. p(x), employed
@@ -129,12 +153,12 @@ function forward!(Λ_end, spec::SearchMatchingStageSpec, layout::GriddedLayout, 
                   kernel, scratch)
     p = kernel.p
     δ = kernel.δ[]                                  # the separation rate backward last saw
-    labor_axis = spec.labor_axis
+    axis = spec.axis
 
-    Λu = fix(Λ_start, layout, labor_axis => 1)
-    Λe = fix(Λ_start, layout, labor_axis => 2)
-    Λu_end = fix(Λ_end, layout, labor_axis => 1)
-    Λe_end = fix(Λ_end, layout, labor_axis => 2)
+    Λu = fix(Λ_start, layout, axis => 1)
+    Λe = fix(Λ_start, layout, axis => 2)
+    Λu_end = fix(Λ_end, layout, axis => 1)
+    Λe_end = fix(Λ_end, layout, axis => 2)
 
     @. Λu_end = (1 - p) * Λu + δ * Λe            # stay unemployed + separations in
     @. Λe_end = p * Λu + (1 - δ) * Λe            # job finders + employed stayers

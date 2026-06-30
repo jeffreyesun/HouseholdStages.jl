@@ -33,9 +33,9 @@ _pairing(a, b) = sum(a .* b)
     # parent) must be sized (n_wealth, n_wealth, n_age) — :z stays a SINGLETON, never
     # replicated.
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid(collect(range(0.0, 1.0; length = 5)))), # transitioned (5)
-        StateAxis(:age,    discrete_finite([1.0, 2.0, 3.0])),                      # dep axis (3)
-        StateAxis(:z,      discrete_finite([0.5, 1.5])),                           # NOT a dep (2)
+        :wealth => GriddedContinuous(collect(range(0.0, 1.0; length = 5))), # transitioned (5)
+        :age => Discrete([1.0, 2.0, 3.0]),                      # dep axis (3)
+        :z => Discrete([0.5, 1.5]),                           # NOT a dep (2)
     )
     n_w, n_age, n_z = 5, 3, 2
 
@@ -67,8 +67,8 @@ end
     # The same dep-only-storage transition on a (wealth, age) layout: the parent is
     # exactly (3, 3, 2), and the duality identity holds.
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:age,    discrete_finite([1.0, 2.0])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :age => Discrete([1.0, 2.0]),
     )
     Ks = stack([[0.6 0.2 0.1; 0.3 0.5 0.3; 0.1 0.3 0.6],
                 [0.8 0.1 0.0; 0.1 0.7 0.2; 0.1 0.2 0.8]])         # (3,3,2)
@@ -93,10 +93,10 @@ end
     # deterministic. The modern stage has no freshness cache, so we observe the
     # re-materialisation directly through the kernel's eψC.
     layout = GriddedLayout(
-        StateAxis(:wealth,   continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:location, categorical([:home, :abroad])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+        :location => Discrete([:home, :abroad]),
     )
-    stage = MigrationStage(layout; location_axis = :location,
+    stage = MigrationStage(layout; axis = :location,
                            migration_cost = FromEnv(:C), ε = 1.0)
     @test :C in effective_env_slice(stage)            # env-dep is declared, not a side channel
 
@@ -107,7 +107,7 @@ end
     C_dear  = [0.0 3.0; 3.0 0.0]                      # costly to move
 
     V_cheap   = copy(backward!(stage, V_end, (C = C_cheap,)))
-    eψC_cheap = copy(stage.kernel.eψC)              # exp(−C_cheap/ε), seated by backward!
+    eψC_cheap = copy(parent(stage.kernel.eψC))      # exp(−C_cheap/ε), seated by backward!
 
     # Forward at the same (V_end, env) pushes mass conservatively.
     Λ0 = fill(1.0 / (n_w * 2), n_w, 2)
@@ -116,20 +116,20 @@ end
 
     # Different env (the cost field changed) ⇒ eψC re-materialises (env-dep cost).
     V_dear   = copy(backward!(stage, V_end, (C = C_dear,)))
-    eψC_dear = copy(stage.kernel.eψC)
+    eψC_dear = copy(parent(stage.kernel.eψC))
     @test !(eψC_cheap ≈ eψC_dear)                     # env-dependent transition re-materialised
     @test !(V_cheap ≈ V_dear)                         # and the value genuinely changes
 
     # Re-running at the SAME dear env reproduces value AND eψC (deterministic refresh).
     V_dear2 = copy(backward!(stage, V_end, (C = C_dear,)))
     @test V_dear ≈ V_dear2
-    @test stage.kernel.eψC ≈ eψC_dear
+    @test parent(stage.kernel.eψC) ≈ eψC_dear
 end
 
 @testset "Env-dependent vs env-independent transition fibers" begin
     # An env-reading matrix closure yields different fibers on different env (the kernel
     # re-materialises each backward); a constant matrix gives the same fiber regardless of env.
-    layout = GriddedLayout(StateAxis(:s, discrete_finite([1.0, 2.0])))
+    layout = GriddedLayout(:s => Discrete([1.0, 2.0]))
 
     # Env-dependent: a job-finding Bernoulli row whose probability rides env tightness.
     # The closure returns the ROW-stochastic T[from, to]; unemp(1)→emp(2) at rate p(θ).
@@ -165,8 +165,8 @@ end
     # "env-dependent stochastic transition" piece, as a PURE transition (no
     # effort choice-collapse here; that is the separate SearchMatching dispatch).
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:emp,    categorical([:unemp, :emp])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :emp => Discrete([:unemp, :emp]),
     )
     δ = 0.10                                          # separation rate (fixed)
 

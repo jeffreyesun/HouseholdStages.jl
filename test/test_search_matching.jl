@@ -23,8 +23,8 @@ using HouseholdStages: fix
 # A two-level labor axis × a wealth axis. θ drives job-finding via the closure.
 function _sam_layout(; n_w = 4)
     return GriddedLayout(
-        StateAxis(:wealth, continuous_grid(collect(range(0.0, 3.0; length = n_w)))),
-        StateAxis(:emp,    categorical([:unemp, :emp])),   # level 1 = unemployed, 2 = employed
+        :wealth => GriddedContinuous(collect(range(0.0, 3.0; length = n_w))),
+        :emp => Discrete([:unemp, :emp]),   # level 1 = unemployed, 2 = employed
     )
 end
 
@@ -34,14 +34,14 @@ _cost(e) = 0.5 * e^2
 
 function _sam_stage(layout; efforts = collect(range(0.0, 2.0; length = 6)),
                     δ = 0.10, tightness = FromEnv(:θ))
-    return SearchMatchingStage(layout; labor_axis = :emp, efforts = efforts,
+    return SearchMatchingStage(layout; axis = :emp, efforts = efforts,
                                cost = _cost, job_finding = _p,
                                separation = δ, tightness = tightness)
 end
 
 @testset "SearchMatchingStage — labor axis must be 2 levels" begin
-    bad = GriddedLayout(StateAxis(:wealth, continuous_grid([0.0, 1.0])),
-                      StateAxis(:emp, categorical([:a, :b, :c])))
+    bad = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0]),
+                      :emp => Discrete([:a, :b, :c]))
     @test_throws AssertionError _sam_stage(bad)
 end
 
@@ -151,7 +151,7 @@ end
 
 @testset "SearchMatchingStage — separation can be FromEnv" begin
     layout = _sam_layout()
-    stage  = SearchMatchingStage(layout; labor_axis = :emp,
+    stage  = SearchMatchingStage(layout; axis = :emp,
                                  efforts = collect(range(0.0, 2.0; length = 5)),
                                  cost = _cost, job_finding = _p,
                                  separation = FromEnv(:δ), tightness = FromEnv(:θ))

@@ -4,37 +4,24 @@
 # WealthChangeStage.
 
 """
-Sell-home stage — an [`ArgmaxStage`](@ref) on a housing axis encoding the
-keep-vs-sell choice. A homeowner (`h ≥ 2`) chooses between keeping its own
-`h` and selling to the renter level (`renter_index`, default `1`); a renter
-has nothing to sell and passes through.
-
-The sale proceeds / realtor fee are **not** applied here — like
-[`MigrationStage`](@ref) carrying only the move cost, follow this stage with
-a [`WealthChangeStage`](@ref) that credits sellers (the cells just landed at
-the renter level). `flow_payoff` defaults to zero on the {keep, sell}
-actions; pass one to add a per-action shifter.
-
-#TODO Sellers and pre-existing renters both sit on the renter slice after the
-choice — identifying sellers for the wealth credit needs the pre-sell size
-carried on another axis, or the fee folded into the buy stage's price.
+Sell-home stage — an [`ArgmaxStage`](@ref) on a housing axis encoding the keep-vs-sell choice. A
+homeowner (`h ≥ 2`) chooses between keeping its own `h` and selling to the renter level
+(`renter_index`, default `1`); a renter has nothing to sell and passes through. The sale proceeds /
+realtor fee are **not** applied here — like [`MigrationStage`](@ref) carrying only the move cost,
+follow this stage with a [`WealthChangeStage`](@ref) that credits the sellers (now at the renter
+level). `flow_payoff`, if given, is a per-action shifter `(housing_value; env) -> Float64`.
 """
-function SellHomeStage(layout::GriddedLayout; housing_axis::Symbol=:h,
+#TODO Sellers and pre-existing renters both sit on the renter slice after the choice — identifying
+# sellers for the wealth credit needs the pre-sell size carried on another axis, or the fee folded
+# into the buy stage's price.
+function SellHomeStage(layout::GriddedLayout; axis::Symbol=:h,
                        renter_index::Int=1, flow_payoff=nothing)
-    values = axisvalues(layout.axes[axis_position(layout, housing_axis)])
-    renter = values[renter_index]
-    own    = getproperty                       # cell.<housing_axis>
-    # Available actions per cell: renters → {stay renter}; owners → {keep, sell}.
-    available = (cell, action) -> begin
-        h = own(cell, housing_axis)
-        h == renter ? (action == renter) : (action == h || action == renter)
-    end
-    fp = flow_payoff === nothing ?
-        ((cell, action; env) -> available(cell, action) ? 0.0 : -Inf) :
-        ((cell, action; env) -> available(cell, action) ? flow_payoff(cell, action; env) : -Inf)
-    return ArgmaxStage(layout;
-        choice_axis    = housing_axis,
-        flow_payoff    = fp,
-        next_state_idx = (cell, action) -> _housing_index(values, action),
-    )
+    # Renters may only stay renters; owners may keep their size or sell to the renter level. The
+    # renter level is identified by its grid VALUE (the axis is injective; cf. the `h == 0.0` idiom
+    # in the housing examples), so the index-positional gate reads over grid values.
+    renter = axis_grid(layout, axis)[renter_index]
+    avail  = (origin, destination) -> origin == renter ? (destination == renter) :
+                                      (destination == origin || destination == renter)
+    reward = _gate_reward(layout, axis, avail, flow_payoff)
+    return ArgmaxStage(layout; axis = axis, reward)
 end

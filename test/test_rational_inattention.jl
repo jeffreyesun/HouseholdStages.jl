@@ -18,13 +18,17 @@ using HouseholdStages
 #   (c) the Gibbs / LSE identity holds with the env-supplied prior;
 #   (d) duality and mass conservation hold.
 
-"""CLAUDE
+"""
 Build the rational-inattention composition `LogitChoice(ε=λ) ∘ UtilityStage(λ·log q)`,
 with the log attention-prior read from `env.q` so the outer loop can converge it.
+
+The per-action amenity `λ·log q(a)` is a dep closure on the (runtime-named) choice axis reading the
+env-supplied prior `env.q` at the axis's grid value; it rides a `DepClosure` carrying `(choice_axis, :env)`
+for the Sources path.
 """
 ri_composition(layout; choice_axis, λ) =
-    LogitChoiceStage(layout; choice_axis, cost_matrix = zeros(_ri_n(layout, choice_axis), _ri_n(layout, choice_axis)), ε = λ) ∘
-    UtilityStage(layout; utility = (cell; env) -> λ * log(env.q[getproperty(cell, choice_axis)]))
+    LogitChoiceStage(layout; axis = choice_axis, cost_matrix = zeros(_ri_n(layout, choice_axis), _ri_n(layout, choice_axis)), ε = λ) ∘
+    UtilityStage(layout; utility = HouseholdStages.DepClosure(nt -> λ * log(nt.env.q[nt[choice_axis]]), (choice_axis,), true))
 
 _ri_n(layout, choice_axis) = axissize(layout.axes[axis_position(layout, choice_axis)])
 
@@ -33,7 +37,7 @@ _ri_n(layout, choice_axis) = axissize(layout.axes[axis_position(layout, choice_a
 # eψC ≡ 1, so this is just the softmax over the destination weights.
 function _ri_prob(chain, n)
     k = chain.buffer.stages[1].kernel    # stages[1] is the logit (modern)
-    return [k.eψC[i, j] * k.value_weight[j, 1] / k.normalizer[i, 1] for i in 1:n, j in 1:n]
+    return [parent(k.eψC)[i, j] * k.value_weight[j, 1] / k.normalizer[i, 1] for i in 1:n, j in 1:n]
 end
 
 @testset "RI composition — reproduces the Matějka–McKay option value (env prior)" begin
@@ -41,15 +45,15 @@ end
     #   value(i) = λ·log Σ_a q(a)·exp(V_end[a]/λ)
     #            = λ·log Σ_a exp((λ·log q(a) + V_end[a])/λ),
     # i.e. exactly the zero-cost logit LSE with the UtilityStage adding λ·log q.
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2, 3])))
+    layout = GriddedLayout(:a => Discrete([1, 2, 3]))
     λ = 0.7
     q = [0.2, 0.5, 0.3]                                # an attention prior
     chain = ri_composition(layout; choice_axis = :a, λ = λ)
     @test chain isa ChainStage
-    # The prior flows through env at solve time via the UtilityStage closure; like
-    # any `(cell; env)` closure it is not statically introspected (see
-    # test_utility_stage.jl "no introspection"), so the numerics below are the
-    # proof that the composition IS RI.
+    # The prior flows through env at solve time via the UtilityStage closure; the
+    # dep closure declares only `:env` (not the specific key `:q`, read dynamically),
+    # so the env slice stays empty and the numerics below are the proof that the
+    # composition IS RI.
     @test isempty(effective_env_slice(chain))
 
     V_end = Float64[0.0, 0.4, -0.2]
@@ -72,8 +76,8 @@ end
     # Multi-dim layout so the off-choice state varies (exercises the permute +
     # per-state matmul) and the logit cost is identically zero (RI has no friction).
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:a, discrete_finite([1, 2, 3])),
+        :w => GriddedContinuous([0.0, 1.0, 2.0]),
+        :a => Discrete([1, 2, 3]),
     )
     n = 3
     λ = 0.5
@@ -114,8 +118,8 @@ end
 
 @testset "RI composition — duality + mass conservation" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 0.5, 1.0])),
-        StateAxis(:a, discrete_finite([1, 2])),
+        :w => GriddedContinuous([0.0, 0.5, 1.0]),
+        :a => Discrete([1, 2]),
     )
     λ = 1.0
     q = [0.6, 0.4]
@@ -150,7 +154,7 @@ end
 @testset "RI composition — uniform prior is a plain temperature-λ logit" begin
     # With q ∝ 1 the log-prior is constant, so RI reduces to the temperature-λ
     # logit with no shifter: value(i) = λ·log Σ_a exp(V_end[a]/λ).
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2, 3])))
+    layout = GriddedLayout(:a => Discrete([1, 2, 3]))
     λ = 0.8
     q = fill(1 / 3, 3)
     chain = ri_composition(layout; choice_axis = :a, λ = λ)

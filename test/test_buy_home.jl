@@ -5,14 +5,14 @@ using HouseholdStages
 # house sizes. Wealth is a passive axis carried through the choice.
 function _house_layout(; n_w = 3, h_levels = [0.0, 1.0, 2.0])
     return GriddedLayout(
-        StateAxis(:wealth, continuous_grid(collect(range(0.0, 1.0; length = n_w)))),
-        StateAxis(:h,      discrete_finite(h_levels)),
+        :wealth => GriddedContinuous(collect(range(0.0, 1.0; length = n_w))),
+        :h => Discrete(h_levels),
     )
 end
 
 @testset "BuyHomeStage — renters choose best size, owners pass through" begin
     layout = _house_layout()
-    stage = BuyHomeStage(layout; housing_axis = :h)
+    stage = BuyHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     # Make house size 3 (index 3) the strict best for renters.
@@ -36,7 +36,7 @@ end
 
 @testset "BuyHomeStage — forward scatters renters, owners unchanged" begin
     layout = _house_layout()
-    stage = BuyHomeStage(layout; housing_axis = :h)
+    stage = BuyHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     V_end = zeros(n_w, n_h)
@@ -59,7 +59,7 @@ end
 
 @testset "BuyHomeStage — gate: an owner never buys a different size" begin
     layout = _house_layout()
-    stage = BuyHomeStage(layout; housing_axis = :h)
+    stage = BuyHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     # Even if another size looks far better, owners are gated to their own h.
@@ -80,7 +80,7 @@ end
 
 @testset "BuyHomeStage — forward mass conservation on a full distribution" begin
     layout = _house_layout(; n_w = 4, h_levels = [0.0, 1.0, 2.0, 3.0])
-    stage = BuyHomeStage(layout; housing_axis = :h)
+    stage = BuyHomeStage(layout; axis = :h)
     n_w, n_h = axissize.(layout.axes)
 
     V_end = randn(n_w, n_h)
@@ -100,10 +100,10 @@ end
     # The buy choice picks the size; a following WealthChangeStage deducts the
     # purchase price q·h from wealth, reading the post-buy housing.
     layout = _house_layout(; n_w = 5, h_levels = [0.0, 1.0, 2.0])
-    buy   = BuyHomeStage(layout; housing_axis = :h)
+    buy   = BuyHomeStage(layout; axis = :h)
     pay   = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> cell.wealth - env.q * cell.h,
-        wealth_axis = :wealth,
+        wealth_post = (; wealth, h, env) -> wealth - env.q * h,
+        axis = :wealth,
     )
     chain = buy ∘ pay
     n_w, n_h = axissize.(layout.axes)

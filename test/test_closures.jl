@@ -12,9 +12,9 @@ using .HouseholdStages: _closure_deps, _closure_env_dep, _closure_deps_from_kwar
                         _closure_kwargs_raw
 
 layout = GriddedLayout(
-    StateAxis(:income,   discrete_finite([0.5, 1.0, 1.5])),
-    StateAxis(:wealth,   continuous_grid([0.0, 1.0, 2.0, 3.0])),
-    StateAxis(:location, categorical([:A, :B])),
+    :income => Discrete([0.5, 1.0, 1.5]),
+    :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+    :location => Discrete([:A, :B]),
 )
 
 @testset "closure deps — recovered in layout order, regardless of kwarg order" begin

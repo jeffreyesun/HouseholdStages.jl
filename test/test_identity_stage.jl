@@ -3,8 +3,8 @@ using HouseholdStages
 
 @testset "IdentityStage — backward and forward are no-ops" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z, discrete_finite([0.5, 1.5])),
+        :w => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     stage = IdentityStage(layout)
 
@@ -21,8 +21,8 @@ end
 @testset "IdentityStage ∘ MarkovStage has same effect as MarkovStage" begin
     P = [0.6 0.4; 0.25 0.75]
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z, discrete_finite([0.5, 1.5])),
+        :w => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.5]),
     )
     s_id   = IdentityStage(layout)
     s_mark = MarkovStage(layout; axis = :z, transition_matrix = P)
@@ -30,12 +30,16 @@ end
     chain_post = s_mark ∘ s_id
 
     Λ_start = rand(3, 2); Λ_start ./= sum(Λ_start)
+    V_seed = zeros(3, 2)                       # seat each Markov K = Tᵀ before forward! (§9 contract)
+    backward!(chain_pre, V_seed, nothing)
     Λ_pre = copy(forward!(chain_pre, Λ_start))
 
+    backward!(chain_post, V_seed, nothing)
     Λ_post = copy(forward!(chain_post, Λ_start))
 
     # Both compositions yield the same end-distribution as a bare MarkovStage.
     s_bare = MarkovStage(layout; axis = :z, transition_matrix = P)
+    backward!(s_bare, V_seed, nothing)
     Λ_bare = forward!(s_bare, Λ_start)
     @test all(isapprox.(Λ_pre,  Λ_bare; atol = 1e-12))
     @test all(isapprox.(Λ_post, Λ_bare; atol = 1e-12))

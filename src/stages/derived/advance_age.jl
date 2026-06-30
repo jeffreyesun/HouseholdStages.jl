@@ -16,14 +16,12 @@ function _age_shift_matrix(n::Integer; absorb_top::Bool=true)
 end
 
 """
-Deterministic age-advance stage — a [`MarkovStage`](@ref) with a
-shift-by-one transition on `age_axis`, so each household ages one period.
-`absorb_top` (default `true`) makes the oldest cohort absorbing and
-conserves mass; `false` lets it roll off into nonexistence, the OLG death
-event. Newborn entry is an exogenous source term for the consumer's outer
-loop, not part of this within-period stage.
+Deterministic age-advance stage — a [`MarkovStage`](@ref) with a shift-by-one
+transition on the age `axis`, so each household ages one period. `absorb_top`
+(default `true`) makes the oldest cohort absorbing and conserves mass; `false`
+lets terminal mass roll off, the OLG death event.
 """
-AdvanceAgeStage(layout::GriddedLayout; age_axis::Symbol=:age, absorb_top::Bool=true) =
-    MarkovStage(layout; axis=age_axis,
-                transition_matrix=_age_shift_matrix(axissize(layout.axes[axis_position(layout, age_axis)]);
+AdvanceAgeStage(layout::GriddedLayout; axis::Symbol=:age, absorb_top::Bool=true) =
+    MarkovStage(layout; axis=axis,
+                transition_matrix=_age_shift_matrix(axissize(layout.axes[axis_position(layout, axis)]);
                                                     absorb_top=absorb_top))

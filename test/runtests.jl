@@ -8,6 +8,7 @@ include("test_axis_ops.jl")
 include("test_closures.jl")
 include("test_env_resolution.jl")
 include("test_payoff_fn.jl")
+include("test_scalar_field.jl")
 include("test_workspace.jl")
 include("test_kernel.jl")
 include("test_transition_flexibility.jl")
@@ -22,14 +23,48 @@ include("test_buy_home.jl")
 include("test_sell_home.jl")
 include("test_monotone_argmax.jl")
 include("test_continuous_argmax.jl")
+include("test_continuous_argmax_stage.jl")
+include("test_refill_policy.jl")
 include("test_deterministic_continuous.jl")
 include("test_identity_stage.jl")
 include("test_utility_stage.jl")
+include("test_pointwise_scale.jl")
 include("test_time_discounting.jl")
+include("test_entry_reproduction.jl")
+include("test_entry_exit.jl")
+include("test_exit.jl")
+include("test_mass_nonconservation.jl")
+include("test_income.jl")
 include("test_advance_age.jl")
 include("test_env_deps.jl")
 include("test_moments.jl")
 include("test_product.jl")
+include("test_kernel_choice.jl")
+include("test_mixing.jl")
+include("test_scale_choice.jl")
+include("test_scale_variance.jl")
+include("test_mean_variance.jl")
+include("test_streaming_choice_model.jl")
+include("test_example_portfolio.jl")
+include("test_example_human_capital.jl")
+include("test_example_insurance.jl")
+include("test_example_rational_inattention.jl")
+include("test_example_durable_housing.jl")
+include("test_example_default.jl")
+include("test_example_directed_search.jl")
+include("test_example_life_cycle.jl")
+include("test_example_huggett.jl")
+include("test_example_sectoral.jl")
+include("test_example_search_matching.jl")
+include("test_example_discrete_ri.jl")
+include("test_example_health.jl")
+include("test_example_risk_shifting.jl")
+include("test_example_bewley.jl")
+include("test_example_choo_siow.jl")
+include("test_example_habit.jl")
+include("test_example_two_asset_hank.jl")
+include("test_example_two_asset_hank_pv.jl")
+include("test_domain_wrappers.jl")
 include("test_population.jl")
 include("test_asset_price_change.jl")
 include("test_borrowing_constraint.jl")
@@ -40,11 +75,11 @@ include("test_user_helpers.jl")
 
 @testset "ForgetfulSumStage — drops one axis, 3D → 2D" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:income, discrete_finite([0.5, 1.0, 1.5])),
-        StateAxis(:taste,  categorical([:a, :b, :c, :d, :e])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :income => Discrete([0.5, 1.0, 1.5]),
+        :taste => Discrete([:a, :b, :c, :d, :e]),
     )
-    stage = ForgetfulSumStage(layout; forget_axis = :taste)
+    stage = ForgetfulSumStage(layout; axis = :taste)
     # Decision 7: the forget axis is RESIZED to a single level, not dropped — the
     # output keeps it at size 1 in the same tuple position.
     @test layout_size(output_layout(stage)) == (4, 3, 1)
@@ -68,12 +103,12 @@ end
 
 @testset "ForgetfulSumStage — drops a middle axis, 4D → 3D" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-        StateAxis(:z, discrete_finite([0.5, 1.0, 1.5, 2.0])),
-        StateAxis(:transient, categorical([:lo, :hi])),
-        StateAxis(:loc, categorical([:A, :B, :C, :D, :E])),
+        :w => GriddedContinuous([0.0, 1.0, 2.0]),
+        :z => Discrete([0.5, 1.0, 1.5, 2.0]),
+        :transient => Discrete([:lo, :hi]),
+        :loc => Discrete([:A, :B, :C, :D, :E]),
     )
-    stage = ForgetfulSumStage(layout; forget_axis = :transient)
+    stage = ForgetfulSumStage(layout; axis = :transient)
     # :transient resized to size 1, kept in position 3.
     @test layout_size(output_layout(stage)) == (3, 4, 1, 5)
 
@@ -92,11 +127,11 @@ end
 
 @testset "ForgetfulSumStage — duality identity" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 0.5, 1.0, 1.5])),
-        StateAxis(:income, discrete_finite([0.5, 1.0, 1.5])),
-        StateAxis(:taste, categorical([:a, :b, :c, :d, :e])),
+        :wealth => GriddedContinuous([0.0, 0.5, 1.0, 1.5]),
+        :income => Discrete([0.5, 1.0, 1.5]),
+        :taste => Discrete([:a, :b, :c, :d, :e]),
     )
-    stage = ForgetfulSumStage(layout; forget_axis = :income)
+    stage = ForgetfulSumStage(layout; axis = :income)
 
     V_out  = randn(4, 1, 5)                         # :income resized to size 1
     Λ_in   = rand(4, 3, 5); Λ_in ./= sum(Λ_in)
@@ -109,7 +144,7 @@ end
 
 @testset "ChainStage — composition is associative and length-2 works" begin
     P = [0.7 0.3; 0.3 0.7]
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     s1 = MarkovStage(layout; axis = :z, transition_matrix = P)
     s2 = MarkovStage(layout; axis = :z, transition_matrix = P)
     chain = s1 ∘ s2

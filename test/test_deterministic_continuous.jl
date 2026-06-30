@@ -8,13 +8,13 @@ using HouseholdStages
 
 @testset "DeterministicContinuousStage — equals the WealthChangeStage wrapper" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0, 4.0])),
-        StateAxis(:income, discrete_finite([0.6, 1.0, 1.4])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0, 4.0]),
+        :income => Discrete([0.6, 1.0, 1.4]),
     )
-    dest = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income
+    dest = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income
 
     cm = DeterministicContinuousStage(layout; destination = dest, axis = :wealth)
-    wc = WealthChangeStage(layout; wealth_post = dest, wealth_axis = :wealth)
+    wc = WealthChangeStage(layout; wealth_post = dest, axis = :wealth)
 
     @test wc isa DeterministicContinuousStage    # the wrapper returns the primitive
     @test cm.spec.axis === :wealth
@@ -26,6 +26,51 @@ using HouseholdStages
 
     Λ_start = rand(5, 3); Λ_start ./= sum(Λ_start)
     @test forward!(cm, Λ_start) == forward!(wc, Λ_start)
+end
+
+@testset "DiscreteMoveStage — mass lands on the nearest grid index; K/Kᵀ duality" begin
+    grid   = [0.0, 1.0, 2.0, 3.0, 4.0]
+    inc    = [0.7, 1.2]
+    layout = GriddedLayout(:wealth => GriddedContinuous(grid),
+                           :income => Discrete(inc))
+    # An off-grid float destination, snapped to the nearest grid INDEX (the discrete sibling of the
+    # continuous move's Young split).
+    dest  = (; wealth, income, env) -> 0.5 * wealth + income
+    stage = DiscreteMoveStage(layout; destination = dest, axis = :wealth)
+
+    V_end   = reshape(Float64.(1:10), (5, 2))
+    V_start = copy(backward!(stage, V_end, NamedTuple()))
+
+    for j in 1:2, i in 1:5
+        target = 0.5 * grid[i] + inc[j]
+        nk     = argmin(abs.(grid .- target))      # nearest grid index
+        @test policy(stage)[i, j] == nk
+        @test V_start[i, j] == V_end[nk, j]        # backward gathers from the snapped index
+    end
+
+    Λ0 = rand(5, 2); Λ0 ./= sum(Λ0)
+    Λ1 = copy(forward!(stage, Λ0))
+    @test sum(Λ1) ≈ 1.0 atol = 1e-12               # 0/1 scatter conserves mass
+
+    # K/Kᵀ duality (a 0/1 selection, no flow payoff): ⟨V_end, K·Λ⟩ = ⟨Kᵀ·V_end, Λ⟩.
+    @test sum(Λ1 .* V_end) ≈ sum(Λ0 .* V_start) atol = 1e-12
+end
+
+@testset "DiscreteMoveStage vs DeterministicContinuousStage — agree on an on-grid destination" begin
+    # When the destination lands exactly on grid points, the nearest-index scatter and the
+    # off-grid Young split coincide (the split puts all mass on the single bracketing node).
+    grid   = [0.0, 1.0, 2.0, 3.0, 4.0]
+    layout = GriddedLayout(:wealth => GriddedContinuous(grid))
+    dest   = (; wealth, env) -> clamp(wealth + 1.0, 0.0, 4.0)   # on-grid shift
+
+    dm = DiscreteMoveStage(layout; destination = dest, axis = :wealth)
+    cm = DeterministicContinuousStage(layout; destination = dest, axis = :wealth)
+
+    V_end = Float64.(1:5)
+    @test backward!(dm, V_end, NamedTuple()) ≈ backward!(cm, V_end, NamedTuple()) atol = 1e-12
+
+    Λ0 = rand(5); Λ0 ./= sum(Λ0)
+    @test forward!(dm, Λ0) ≈ forward!(cm, Λ0) atol = 1e-12
 end
 
 @testset "redistribute_along! — on-grid :nearest equals a single-point Young split" begin

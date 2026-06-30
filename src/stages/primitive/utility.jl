@@ -1,8 +1,8 @@
 """
-State-only flow-utility stage: `V_start[s] = u[s] + V_end[s]`, identity
-on Λ. `utility` is either a `(cell; env)` closure evaluated per cell, or
-a precomputed layout-shaped `AbstractArray` of flow utilities (e.g. a
-`0`/`-Inf` feasibility table — see [`BorrowingConstraintStage`](@ref)).
+State-only flow-utility stage — backward-shift `V_start = u .+ V_end`, identity on Λ. `utility` is any
+[`ScalarField`](@ref) source held in the Spec: a `(; dep…[, env])` closure varying along an axis subset,
+a precomputed layout-shaped array (a `0`/`-Inf` feasibility table — see [`BorrowingConstraintStage`](@ref)),
+a scalar, or a `FromEnv`.
 """
 struct UtilityStageSpec{F} <: AbstractStageSpec
     utility :: F
@@ -16,40 +16,22 @@ UtilityStageSpec(; utility) = UtilityStageSpec{typeof(utility)}(utility)
 ##########################
 # Gridded implementation #
 ##########################
-# K = I (identity on Λ); the flow utility is a layout-shaped array added to V_end.
-# `cache` holds the reward array + (for the closure form) the memoised `cell_array`
-# the `(cell; env)` closure broadcasts over, refilled each backward.
+# K = I (identity on Λ); the flow utility is a `ScalarField` broadcast-added to V_end.
 
 allocate_kernel(::UtilityStageSpec, ::Type, ::GriddedLayout) = I
 
-"Cache: the reward buffer and the memoised cells (`nothing` for the precomputed-array form)."
-function allocate_cache(spec::UtilityStageSpec, ::Type{T}, layout::GriddedLayout) where {T}
-    if spec.utility isa AbstractArray
-        return (reward = copy(spec.utility), cells = nothing)
-    else
-        return (reward = zeros(T, layout_size(layout)), cells = cell_array(layout))
-    end
-end
+"Cache: the flow utility as a `ScalarField` (the materialized buffer; the Source lives in the Spec). Env-independent ⇒ filled at construction; env-dependent ⇒ NaN-filled, seated each `backward!`."
+allocate_cache(spec::UtilityStageSpec, ::Type{T}, layout::GriddedLayout) where {T} =
+    (payoff = ScalarField(spec.utility, layout, T),)
 
-function backward!(V_start, spec::UtilityStageSpec, ::GriddedLayout, V_end;
-                   env, kernel, scratch, cache)
-    u = _fill_utility!(cache.reward, spec.utility, cache.cells, env)
-    V_start .= u .+ V_end
+function backward!(V_start, spec::UtilityStageSpec, layout::GriddedLayout, V_end;
+                   env, kernel, scratch, cache, env_changed::Bool = true)
+    V_start .= materialize_scalar!(cache.payoff, spec.utility, layout, env; env_changed) .+ V_end
     return (V_start, kernel)
 end
 
 # forward! (I → copyto!; the utility reward is a backward-only V shifter) is the generic
 # modern default (abstract.jl).
-
-# Array form: the table is static — already in `reward`, nothing to refill.
-_fill_utility!(data, ::AbstractArray, ::Nothing, env) = data
-
-"""
-Refill the reward buffer with `u(cell; env)` (closure form). `.(...; env)` not `@.`,
-which can't carry the `env` kwarg.
-"""
-_fill_utility!(data, utility, cells, env) =
-    (data .= utility.(cells; env); data)
 
 
 #####################################################################

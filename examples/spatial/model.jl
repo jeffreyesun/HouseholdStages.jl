@@ -54,12 +54,7 @@ Base.Broadcast.broadcastable(p::SpatialParams) = Ref(p)
 const params = SpatialParams()
 
 
-# Utility #
-#---------#
-
-_u_crra(c, ::Union{Val{1}, Val{1.0}}) = log(c)
-_u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
-u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
+# Utility: CRRA felicity `u_crra` is provided by HouseholdStages.
 
 
 # Household chain assembly #
@@ -73,47 +68,42 @@ The wealth-axis log grid and the four-stage layout are inlined here.
 """
 function spatial_household(p = params)
     layout = GriddedLayout(
-        StateAxis(:wealth,   continuous_grid(p.w_min, p.w_max;
-                                             length = p.N_w, spacing = :log)),
-        StateAxis(:income,   p.y_grid),
-        StateAxis(:location, categorical([:home, :abroad])),
+        :wealth   => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income   => Discrete(p.y_grid),
+        :location => Discrete([:home, :abroad]),
     )
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
-    move    = MigrationStage(layout;
-        location_axis  = :location,
+    move    = MigrationStage(layout;   # defaults: (; axis = :location)
         migration_cost = [0.0           p.migration_cost;
                           p.migration_cost 0.0],
         ε              = p.ε_logit,
     )
-    receipt = WealthChangeStage(layout;
-        wealth_post = function (cell; env)
-            r_loc = cell.location == :home ? env.r_home : env.r_abroad
-            w_loc = cell.location == :home ? env.w_home : env.w_abroad
-            return (1 + r_loc) * cell.wealth + w_loc * cell.income
+    receipt = WealthChangeStage(layout;   # defaults: (; axis = :wealth)
+        wealth_post = function (; location, wealth, income, env)
+            r_loc = location == :home ? env.r_home : env.r_abroad
+            w_loc = location == :home ? env.w_home : env.w_abroad
+            return (1 + r_loc) * wealth + w_loc * income
         end,
-        wealth_axis = :wealth,
     )
-    savings = ConsumptionSavingsStage(layout;
-        β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
-        monotone_search = :divide_conquer,
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+        β       = p.β,
+        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock ∘ move ∘ receipt ∘ savings
     return define_moments!(hh;
         K_home     = at_end(
-            integrand = (cell; env) -> cell.location == :home ? cell.wealth : 0.0,
+            integrand = (; location, wealth) -> location == :home ? wealth : 0.0,
             reduce = sum),
         K_abroad   = at_end(
-            integrand = (cell; env) -> cell.location == :abroad ? cell.wealth : 0.0,
+            integrand = (; location, wealth) -> location == :abroad ? wealth : 0.0,
             reduce = sum),
         pop_home   = at_end(
-            integrand = (cell; env) -> cell.location == :home ? 1.0 : 0.0,
+            integrand = (; location) -> location == :home ? 1.0 : 0.0,
             reduce = sum),
         pop_abroad = at_end(
-            integrand = (cell; env) -> cell.location == :abroad ? 1.0 : 0.0,
+            integrand = (; location) -> location == :abroad ? 1.0 : 0.0,
             reduce = sum),
     )
 end

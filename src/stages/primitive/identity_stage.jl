@@ -12,7 +12,7 @@ struct IdentityStageSpec <: AbstractStageSpec end
 allocate_kernel(::IdentityStageSpec, ::Type, ::GriddedLayout) = I
 
 function backward!(V_start, ::IdentityStageSpec, ::GriddedLayout, V_end;
-                   env, kernel, scratch, cache)
+                   env, kernel, scratch, cache, env_changed::Bool = true)
     backward!(V_start, kernel, V_end)   # I → copyto!
     return (V_start, kernel)
 end

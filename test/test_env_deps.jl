@@ -5,7 +5,6 @@ using HouseholdStages
     @test static_env_deps(HouseholdStages.MarkovStageSpec) === NamedTuple()
     @test static_env_deps(HouseholdStages.ArgmaxStageSpec) === NamedTuple()
     @test static_env_deps(HouseholdStages.LogitChoiceStageSpec) === NamedTuple()
-    @test static_env_deps(HouseholdStages.ForgetfulSumStageSpec) === NamedTuple()
     @test static_env_deps(HouseholdStages.IdentityStageSpec) === NamedTuple()
 end
 
@@ -14,19 +13,18 @@ end
     # `closure_deps` to be declared. effective_env_slice reflects only
     # static_env_deps + env-resolved spec fields, so a stage whose env
     # reads flow exclusively through closures has an empty slice.
-    layout = GriddedLayout(StateAxis(:a, [1, 2]))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = ArgmaxStage(layout;
-        choice_axis    = :a,
-        flow_payoff    = (cell, a; env) -> (a == 1 ? 0.0 : env.bonus),
-        next_state_idx = (cell, a) -> a,
+        axis = :a,
+        reward = (; env) -> [after == 1 ? 0.0 : env.bonus for after in 1:2, before in 1:2],
     )
     @test isempty(effective_env_slice(stage))
 end
 
 @testset "effective_env_slice picks up env-resolved Symbol field" begin
-    layout = GriddedLayout(StateAxis(:a, [1, 2]))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = FromEnv(:ξ),
     )
@@ -34,9 +32,9 @@ end
 end
 
 @testset "validate_env catches missing env keys" begin
-    layout = GriddedLayout(StateAxis(:a, [1, 2]))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = FromEnv(:ξ),
     )
@@ -46,10 +44,10 @@ end
 
 @testset "chain_env_names merges per-stage env-resolved slices" begin
     P = [0.6 0.4; 0.25 0.75]
-    layout = GriddedLayout(StateAxis(:a, [1, 2]))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     s1 = MarkovStage(layout; axis = :a, transition_matrix = P)
     s2 = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = FromEnv(:ξ),
     )
@@ -61,16 +59,16 @@ end
     # Pure-Symbol label fields (like `choice_axis = :a`) are not env-resolved;
     # the discrimination is by value type — `isa FromEnv` marks env-resolution,
     # everything else (including pure Symbols) is a literal.
-    layout = GriddedLayout(StateAxis(:a, [1, 2]))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     calibrated = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = 0.5,
     )
     @test isempty(effective_env_slice(calibrated))
 
     swept = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = FromEnv(:ξ),
     )

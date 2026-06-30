@@ -8,8 +8,8 @@ using HouseholdStages
 
 function _tiny_aiyagari_layout(; N_w::Int = 20)
     return GriddedLayout(
-        StateAxis(:wealth, continuous_grid(0.0, 30.0; length = N_w, spacing = :log)),
-        StateAxis(:income, [0.6, 1.4]),
+        :wealth => GriddedContinuous(0.0, 30.0, N_w; spacing = :log),
+        :income => Discrete([0.6, 1.4]),
     )
 end
 
@@ -18,14 +18,14 @@ function _tiny_aiyagari_household(layout::GriddedLayout;
     P_y = [0.7 0.3; 0.3 0.7]
     income_shock = MarkovStage(layout; axis = :income, transition_matrix = P_y)
     income_receipt = WealthChangeStage(layout;
-        wealth_post  = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis  = :wealth,
+        wealth_post  = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income,
+        axis         = :wealth,
     )
     u(c) = c < 0 ? -Inf : (σ == 1.0 ? log(c) : (c^(1 - σ)) / (1 - σ))
     savings = ConsumptionSavingsStage(layout;
         β               = β,
         utility         = (cell, c; env) -> u(c),
-        wealth_axis     = :wealth,
+        axis            = :wealth,
         monotone_search = :divide_conquer,
     )
     chain = income_shock ∘ income_receipt ∘ savings

@@ -3,8 +3,8 @@ using HouseholdStages
 
 @testset "AssetPriceChangeStage — constructor returns a DeterministicContinuousStage" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:h,      [0.0, 1.0, 2.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :h => Discrete([0.0, 1.0, 2.0]),
     )
     stage = AssetPriceChangeStage(layout; holdings_axis = :h)
     @test stage isa DeterministicContinuousStage
@@ -13,13 +13,13 @@ end
 
 @testset "AssetPriceChangeStage — wealth_post closure matches hand-built recipe" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0, 4.0])),
-        StateAxis(:h,      [0.0, 1.0, 2.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0, 4.0]),
+        :h => Discrete([0.0, 1.0, 2.0]),
     )
     stage_sugar = AssetPriceChangeStage(layout; holdings_axis = :h)
     stage_hand  = WealthChangeStage(layout;
-        wealth_post = (cell; env) -> cell.wealth + (env.q - env.q_last) * cell.h,
-        wealth_axis = :wealth,
+        wealth_post = (; wealth, h, env) -> wealth + (env.q - env.q_last) * h,
+        axis = :wealth,
     )
 
     env = (; q = 1.10, q_last = 1.00)
@@ -37,8 +37,8 @@ end
 
 @testset "AssetPriceChangeStage — q == q_last is identity (up to interpolation)" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:h,      [0.0, 1.0]),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :h => Discrete([0.0, 1.0]),
     )
     stage = AssetPriceChangeStage(layout; holdings_axis = :h)
     env   = (; q = 1.0, q_last = 1.0)
@@ -54,8 +54,8 @@ end
 
 @testset "AssetPriceChangeStage — custom field names" begin
     layout = GriddedLayout(
-        StateAxis(:b, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:k, [0.0, 1.0, 2.0]),
+        :b => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :k => Discrete([0.0, 1.0, 2.0]),
     )
     stage = AssetPriceChangeStage(layout;
         holdings_axis = :k,
@@ -68,4 +68,15 @@ end
     env = (; p_now = 1.5, p_prev = 1.0)
     V_end = reshape(Float64.(1:12), (4, 3))
     @test backward!(stage, V_end, env) isa AbstractArray
+end
+
+@testset "AssetPriceChangeStage — single-asset case (holdings_axis == wealth_axis)" begin
+    # Regression: `DepClosure((:wealth, :wealth), …)` → `NamedTuple{(:wealth, :wealth)}` threw
+    # "duplicate field name". The declared axes must be deduped when the asset IS the wealth axis.
+    layout = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]), :z => Discrete([1.0, 2.0]))
+    stage = AssetPriceChangeStage(layout; holdings_axis = :wealth, wealth_axis = :wealth)
+    @test stage.spec.axis === :wealth
+    env = (; q = 1.5, q_last = 1.0)
+    V_end = reshape(Float64.(1:8), (4, 2))
+    @test backward!(stage, V_end, env) isa AbstractArray   # builds + runs (revaluation 0.5·wealth)
 end

@@ -180,8 +180,8 @@ function run_survey()
     survey_stage("MarkovStage")() do
         P = [0.7 0.3; 0.3 0.7]
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-            StateAxis(:income, discrete_finite([0.5, 1.5])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+            :income => Discrete([0.5, 1.5]),
         )
         stage = MarkovStage(layout; axis = :income, transition_matrix = P)
         V_end = reshape(Float64.(1:8), 4, 2)
@@ -192,11 +192,11 @@ function run_survey()
     # --- LogitChoiceStage ---
     survey_stage("LogitChoiceStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-            StateAxis(:a, discrete_finite([1, 2])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+            :a => Discrete([1, 2]),
         )
         stage = LogitChoiceStage(layout;
-            choice_axis = :a,
+            axis = :a,
             cost_matrix = [0.0 0.5; 0.5 0.0],
             ε           = 0.7)
         V_end = [0.1 * w + 0.2 * j for w in 1:3, j in 1:2]
@@ -207,11 +207,11 @@ function run_survey()
     # --- MigrationStage (sugar over LogitChoice) ---
     survey_stage("MigrationStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 0.5, 1.0])),
-            StateAxis(:location, categorical([:home, :abroad])),
+            :wealth => GriddedContinuous([0.0, 0.5, 1.0]),
+            :location => Discrete([:home, :abroad]),
         )
         stage = MigrationStage(layout;
-            location_axis = :location,
+            axis = :location,
             migration_cost = [0.0 0.5; 0.5 0.0],
             ε = 1.0)
         V_end = [0.1 * w + 0.3 * (l - 1) for w in 1:3, l in 1:2]
@@ -222,11 +222,11 @@ function run_survey()
     # --- SectorSwitchingStage (sugar over LogitChoice) ---
     survey_stage("SectorSwitchingStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 0.5, 1.0])),
-            StateAxis(:sector, categorical([:ag, :mfg, :svc])),
+            :wealth => GriddedContinuous([0.0, 0.5, 1.0]),
+            :sector => Discrete([:ag, :mfg, :svc]),
         )
         C = [0.0 0.4 0.6; 0.4 0.0 0.4; 0.6 0.4 0.0]
-        stage = SectorSwitchingStage(layout; sector_axis = :sector,
+        stage = SectorSwitchingStage(layout; axis = :sector,
                                      switching_cost = C, ε = 0.7)
         V_end = [0.1 * w + 0.2 * s for w in 1:3, s in 1:3]
         Λ = rand(3, 3); Λ ./= sum(Λ)
@@ -234,17 +234,15 @@ function run_survey()
     end
 
     # --- ArgmaxStage ---
-    # backward! is GPU-ready (payoff assembled host-side for the Symbol cells,
-    # copied to a device-resident `R`, then the continuation gather + findmax
-    # run on-device). forward! is a colliding scatter-add (distinct origins →
-    # one destination) — the same atomics-needing kernel that CS/WealthChange
-    # forward want — so the stage as a whole is NEEDS-KERNEL on its forward leg.
-    survey_stage("ArgmaxStage"; expect_needs_kernel=true)() do
-        layout = GriddedLayout(StateAxis(:s, categorical([:A, :B])))
-        stage = ArgmaxStage(layout;
-            choice_axis = :s,
-            flow_payoff = (cell, a; env) -> (a == :B ? 1.0 : 0.0),
-            next_state_idx = (cell, a) -> a == :A ? 1 : 2)
+    # GPU-complete (both legs). backward! is the discrete `(max, +)` `:brute` argmax over an
+    # unordered axis — now a device kernel (`_brute_argmax_kernel!` in the ext): one thread per
+    # stratum column, scalar `>` first-index tie-break, bit-identical to the CPU brute walk.
+    # forward! is the integer-policy scatter, which reuses the CS `_cs_forward_scatter!` device
+    # kernel (distinct origins → one destination, one thread owns each column ⇒ no atomics).
+    survey_stage("ArgmaxStage")() do
+        layout = GriddedLayout(:s => Discrete([:A, :B]))
+        # Reward matrix on :s: choosing :B (after index 2) scores +1, :A scores 0.
+        stage = ArgmaxStage(layout; axis = :s, reward = [0.0 0.0; 1.0 1.0])
         V_end = Float64[0.0, 0.0]
         Λ = Float64[0.6, 0.4]
         (stage, V_end, Λ, nothing)
@@ -253,10 +251,10 @@ function run_survey()
     # --- UtilityStage ---
     survey_stage("UtilityStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-            StateAxis(:income, discrete_finite([0.5, 1.0])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+            :income => Discrete([0.5, 1.0]),
         )
-        stage = UtilityStage(layout; utility = (cell; env) -> cell.wealth + env.bonus)
+        stage = UtilityStage(layout; utility = (; wealth, env) -> wealth + env.bonus)
         V_end = zeros(3, 2)
         Λ = rand(3, 2); Λ ./= sum(Λ)
         (stage, V_end, Λ, (bonus = 10.0,))
@@ -265,8 +263,8 @@ function run_survey()
     # --- IdentityStage ---
     survey_stage("IdentityStage")() do
         layout = GriddedLayout(
-            StateAxis(:w, continuous_grid([0.0, 1.0, 2.0])),
-            StateAxis(:z, discrete_finite([0.5, 1.5])),
+            :w => GriddedContinuous([0.0, 1.0, 2.0]),
+            :z => Discrete([0.5, 1.5]),
         )
         stage = IdentityStage(layout)
         V_end = randn(3, 2)
@@ -277,8 +275,8 @@ function run_survey()
     # --- BorrowingConstraintStage ---
     survey_stage("BorrowingConstraintStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([-1.0, 0.0, 1.0, 2.0])),
-            StateAxis(:y, discrete_finite([0.5, 1.0])),
+            :wealth => GriddedContinuous([-1.0, 0.0, 1.0, 2.0]),
+            :y => Discrete([0.5, 1.0]),
         )
         mask = falses(4, 2); mask[1, :] .= true
         stage = BorrowingConstraintStage(layout; infeasible = mask)
@@ -290,11 +288,11 @@ function run_survey()
     # --- ForgetfulSumStage ---
     survey_stage("ForgetfulSumStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-            StateAxis(:income, discrete_finite([0.5, 1.0, 1.5])),
-            StateAxis(:taste,  categorical([:a, :b, :c, :d, :e])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+            :income => Discrete([0.5, 1.0, 1.5]),
+            :taste => Discrete([:a, :b, :c, :d, :e]),
         )
-        stage = ForgetfulSumStage(layout; forget_axis = :taste)
+        stage = ForgetfulSumStage(layout; axis = :taste)
         V_end = randn(4, 3, 1)         # output layout: :taste resized to size 1
         Λ = rand(4, 3, 5); Λ ./= sum(Λ)
         (stage, V_end, Λ, nothing)
@@ -303,8 +301,8 @@ function run_survey()
     # --- TimeDiscountingStage ---
     survey_stage("TimeDiscountingStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
-            StateAxis(:income, discrete_finite([0.5, 1.0])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
+            :income => Discrete([0.5, 1.0]),
         )
         stage = TimeDiscountingStage(layout; β = 0.96)
         V_end = reshape(Float64.(1:6), 3, 2)
@@ -315,10 +313,10 @@ function run_survey()
     # --- AdvanceAgeStage (sugar over Markov) ---
     survey_stage("AdvanceAgeStage")() do
         layout = GriddedLayout(
-            StateAxis(:age, discrete_finite([1, 2, 3, 4])),
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0])),
+            :age => Discrete([1, 2, 3, 4]),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
         )
-        stage = AdvanceAgeStage(layout; age_axis = :age)
+        stage = AdvanceAgeStage(layout; axis = :age)
         V_end = reshape(Float64.(1:12), 4, 3)
         Λ = rand(4, 3); Λ ./= sum(Λ)
         (stage, V_end, Λ, nothing)
@@ -327,12 +325,12 @@ function run_survey()
     # --- WealthChangeStage (hand-written CUDA kernels via HouseholdStagesCUDAExt) ---
     survey_stage("WealthChangeStage")() do
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-            StateAxis(:income, discrete_finite([0.5, 1.0])),
+            :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+            :income => Discrete([0.5, 1.0]),
         )
         stage = WealthChangeStage(layout;
-            wealth_post = (cell; env) -> (1 + env.r) * cell.wealth,
-            wealth_axis = :wealth)
+            wealth_post = (; wealth, env) -> (1 + env.r) * wealth,
+            axis = :wealth)
         V_end = reshape(Float64.(1:8), 4, 2)
         Λ = rand(4, 2); Λ ./= sum(Λ)
         (stage, V_end, Λ, (r = 0.04,))
@@ -342,13 +340,13 @@ function run_survey()
     survey_stage("ConsumptionSavingsStage")() do
         n_w = 16
         layout = GriddedLayout(
-            StateAxis(:wealth, continuous_grid(
-                [exp(t) - 1.0 for t in range(0.0, log(21.0); length = n_w)])),
-            StateAxis(:income, discrete_finite([0.6, 1.0, 1.4])),
+            :wealth => GriddedContinuous(
+                [exp(t) - 1.0 for t in range(0.0, log(21.0); length = n_w)]),
+            :income => Discrete([0.6, 1.0, 1.4]),
         )
         stage = ConsumptionSavingsStage(layout; β = 0.96,
             utility = (cell, c; env) -> log(c),
-            wealth_axis = :wealth)
+            axis = :wealth)
         V_end = [0.1 * w + 0.05 * y for w in 1:n_w, y in 1:3]
         Λ = rand(n_w, 3); Λ ./= sum(Λ)
         (stage, V_end, Λ, NamedTuple())
@@ -433,16 +431,18 @@ function write_markdown(path, gpu_name)
                     "choice×wealth); a state-dependent flow utility falls back to ",
                     "the CPU backward.")
         println(io)
-        println(io, "**Note on `ArgmaxStage`.** Its `backward!` is GPU-ready: ",
-                    "the per-cell payoff is assembled host-side (the cells may ",
-                    "be `Symbol`-valued, which no device broadcast can ",
-                    "evaluate), copied into a device-resident `R` buffer, and ",
-                    "the continuation gather + `findmax` then run on-device. ",
-                    "Only its `forward!` — a colliding scatter-add (distinct ",
-                    "origins → one destination) — still wants a hand-written ",
-                    "atomics kernel. ArgmaxStage is outside the two stages the ",
-                    "project spec permits custom kernels for (CS + WealthChange), ",
-                    "so it stays NEEDS-KERNEL on the forward leg.")
+        println(io, "**Note on `ArgmaxStage`.** GPU-complete on both legs. The ",
+                    "reward face is assembled host-side (cells may be ",
+                    "`Symbol`-valued, which no device broadcast can evaluate) and ",
+                    "copied into a device-resident `U` buffer. `backward!` — the ",
+                    "discrete `(max, +)` `:brute` argmax over an unordered axis — ",
+                    "runs the ext's `_brute_argmax_kernel!` (one thread per stratum ",
+                    "column, scalar `>` first-index tie-break, bit-identical to the ",
+                    "CPU brute walk including ties; verified value AND policy index ",
+                    "in `test/gpu/test_kernels.jl`). `forward!` — the integer-policy ",
+                    "scatter (distinct origins → one destination) — reuses the CS ",
+                    "`_cs_forward_scatter!` device kernel (one thread owns each ",
+                    "column, so the colliding `+=` needs no atomics).")
         println(io)
         println(io, "## CPU→GPU path used by the survey")
         println(io)

@@ -7,18 +7,18 @@ using HouseholdStages
 
 @testset "LogitUtilityStage — reproduces the state-dependent logit closed form" begin
     layout = GriddedLayout(
-        StateAxis(:income,   discrete_finite([0.6, 1.4])),
-        StateAxis(:location, categorical([:A, :B, :C])),
+        :income => Discrete([0.6, 1.4]),
+        :location => Discrete([:A, :B, :C]),
     )
     ε = 0.8
     C = [0.0 0.5 0.7;
          0.5 0.0 0.5;
          0.7 0.5 0.0]
-    dest_value(cell; env) = cell.location === :B ? 0.8 * cell.income :
-                            cell.location === :C ? 0.6 / cell.income : 0.0
+    dest_value(; location, income) = location === :B ? 0.8 * income :
+                                      location === :C ? 0.6 / income : 0.0
 
     stage = LogitUtilityStage(layout;
-        choice_axis = :location, cost_matrix = C, utility = dest_value, ε = ε)
+        axis = :location, cost_matrix = C, utility = dest_value, ε = ε)
     @test stage isa ChainStage
 
     V_end = Float64[0.3 * zi + 0.1 * li for zi in 1:2, li in 1:3]
@@ -33,16 +33,16 @@ end
 
 @testset "LogitUtilityStage — equals the manual LogitChoiceStage ∘ UtilityStage" begin
     layout = GriddedLayout(
-        StateAxis(:income,   discrete_finite([0.6, 1.4])),
-        StateAxis(:location, categorical([:A, :B, :C])),
+        :income => Discrete([0.6, 1.4]),
+        :location => Discrete([:A, :B, :C]),
     )
     ε = 0.7
     C = [0.0 0.4 0.9; 0.4 0.0 0.4; 0.9 0.4 0.0]
-    payoff(cell; env) = cell.location === :C ? 0.5 : 0.0
+    payoff(; location) = location === :C ? 0.5 : 0.0
 
     packaged = LogitUtilityStage(layout;
-        choice_axis = :location, cost_matrix = C, utility = payoff, ε = ε)
-    manual = LogitChoiceStage(layout; choice_axis = :location, cost_matrix = C, ε = ε) ∘
+        axis = :location, cost_matrix = C, utility = payoff, ε = ε)
+    manual = LogitChoiceStage(layout; axis = :location, cost_matrix = C, ε = ε) ∘
              UtilityStage(layout; utility = payoff)
 
     V_end = randn(2, 3)

@@ -44,52 +44,45 @@ using Printf
 end
 Base.Broadcast.broadcastable(p::SpatialParams) = Ref(p)
 
-_u_crra(c, ::Val{1}) = log(c)
-_u_crra(c, ::Val{σ}) where σ = (c^(1 - σ)) / (1 - σ)
-u_crra(c, valσ::Val) = c < 0 ? -Inf : _u_crra(c, valσ)
+# CRRA felicity `u_crra` is provided by HouseholdStages.
 
 function spatial_household(p::SpatialParams)
     layout = GriddedLayout(
-        StateAxis(:wealth,   continuous_grid(p.w_min, p.w_max;
-                                             length = p.N_w, spacing = :log)),
-        StateAxis(:income,   p.y_grid),
-        StateAxis(:location, categorical([:home, :abroad])),
+        :wealth   => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
+        :income   => Discrete(p.y_grid),
+        :location => Discrete([:home, :abroad]),
     )
 
     shock = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
 
-    migration = MigrationStage(layout;
-        location_axis  = :location,
+    migration = MigrationStage(layout;   # defaults: (; axis = :location)
         migration_cost = [0.0              p.migration_cost;
                           p.migration_cost 0.0],
         ε              = p.ε_logit,
     )
 
-    receipt = WealthChangeStage(layout;
-        wealth_post = function (cell; env)
-            (r, w) = cell.location == :home ?
+    receipt = WealthChangeStage(layout;   # defaults: (; axis = :wealth)
+        wealth_post = function (; location, wealth, income, env)
+            (r, w) = location == :home ?
                      (env.r_home, env.w_home) :
                      (env.r_abroad, env.w_abroad)
-            return (1 + r) * cell.wealth + w * cell.income
+            return (1 + r) * wealth + w * income
         end,
-        wealth_axis = :wealth,
     )
 
-    savings = ConsumptionSavingsStage(layout;
-        β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        wealth_axis     = :wealth,
-        monotone_search = :divide_conquer,
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+        β       = p.β,
+        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
     )
 
     return define_moments!(shock ∘ migration ∘ receipt ∘ savings;
-        K_home     = at_end(integrand = (cell; env) -> cell.location == :home   ? cell.wealth : 0.0,
+        K_home     = at_end(integrand = (; location, wealth) -> location == :home   ? wealth : 0.0,
                             reduce = sum),
-        K_abroad   = at_end(integrand = (cell; env) -> cell.location == :abroad ? cell.wealth : 0.0,
+        K_abroad   = at_end(integrand = (; location, wealth) -> location == :abroad ? wealth : 0.0,
                             reduce = sum),
-        pop_home   = at_end(integrand = (cell; env) -> cell.location == :home   ? 1.0 : 0.0,
+        pop_home   = at_end(integrand = (; location) -> location == :home   ? 1.0 : 0.0,
                             reduce = sum),
-        pop_abroad = at_end(integrand = (cell; env) -> cell.location == :abroad ? 1.0 : 0.0,
+        pop_abroad = at_end(integrand = (; location) -> location == :abroad ? 1.0 : 0.0,
                             reduce = sum),
     )
 end

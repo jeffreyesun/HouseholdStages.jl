@@ -4,21 +4,21 @@ using ForwardDiff
 using ForwardDiff: Dual, Tag
 
 @testset "lift_jacobian — :reverse returns stage; uses per-stage adjoints" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.7 0.3; 0.3 0.7]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
     @test lift_jacobian(s; mode = :reverse) === s
 end
 
 @testset "lift_jacobian — unknown mode errors" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.7 0.3; 0.3 0.7]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
     @test_throws ErrorException lift_jacobian(s; mode = :sideways)
 end
 
 @testset "with_eltype — buffer eltype changes; static fields shared" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.7 0.3; 0.3 0.7]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
     D = ForwardDiff.Dual{Nothing, Float64, 1}
@@ -35,7 +35,7 @@ end
     # Jacobian of V_in wrt V_end is exactly P (the transition matrix
     # along the dim, transposed in the Markov-rows-are-conditioning
     # convention). Verify a single tangent direction.
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.7 0.3; 0.3 0.7]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
     s_d = lift_jacobian(s; mode = :forward, n_dual = 1)
@@ -67,19 +67,19 @@ end
     # GridSavings test after the legacy stage was removed.)
 
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([0.0, 1.0, 2.0, 3.0])),
-        StateAxis(:income, discrete_finite([0.5, 1.5])),
+        :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
+        :income => Discrete([0.5, 1.5]),
     )
     P = [0.7 0.3; 0.3 0.7]
     shock   = MarkovStage(layout; axis = :income, transition_matrix = P)
     receipt = WealthChangeStage(layout;
-        wealth_post  = (cell; env) -> (1 + env.r) * cell.wealth + env.w * cell.income,
-        wealth_axis  = :wealth,
+        wealth_post  = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income,
+        axis         = :wealth,
     )
     saves = ConsumptionSavingsStage(layout;
         β            = 0.96,
         utility      = (cell, c; env) -> log(c),
-        wealth_axis  = :wealth,
+        axis         = :wealth,
     )
     chain = shock ∘ receipt ∘ saves
 
@@ -125,7 +125,7 @@ end
     #     ⟨backward!(V_end), dV_start⟩ = ⟨V_end, backward_adjoint!(dV_start)⟩
     # (without the flow payoff r, since MarkovStage has r = 0). This is
     # the cleanest way to confirm the adjoint matches the primal.
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.6 0.4; 0.25 0.75]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
 
@@ -138,9 +138,10 @@ end
 end
 
 @testset "forward_adjoint!(MarkovStage) — dot-product test" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P = [0.6 0.4; 0.25 0.75]
     s = MarkovStage(layout; axis = :z, transition_matrix = P)
+    backward!(s, randn(2), NamedTuple())   # seat K = Tᵀ before applying the forward operator (§9 contract)
 
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
     dΛ_end  = randn(2)
@@ -151,7 +152,7 @@ end
 end
 
 @testset "adjoints(IdentityStage) — pass-through" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     s = IdentityStage(layout)
 
     dV = randn(2)
@@ -162,10 +163,11 @@ end
 
 @testset "adjoints(ForgetfulSumStage) — dot-product tests" begin
     layout = GriddedLayout(
-        StateAxis(:w, continuous_grid([1.0, 2.0, 3.0])),
-        StateAxis(:t, categorical([:a, :b])),
+        :w => GriddedContinuous([1.0, 2.0, 3.0]),
+        :t => Discrete([:a, :b]),
     )
-    s = ForgetfulSumStage(layout; forget_axis = :t)
+    s = ForgetfulSumStage(layout; axis = :t)
+    backward!(s, randn(3, 1), NamedTuple())   # seat the transition before applying forward! (§9 contract)
 
     # Forward: Λ_start (3,2) → Λ_end (3,1) (:t resized to size 1, not dropped).
     Λ_start = abs.(randn(3, 2)); Λ_start ./= sum(Λ_start)
@@ -183,12 +185,8 @@ end
 end
 
 @testset "adjoints(ArgmaxStage) — dot-product test" begin
-    layout = GriddedLayout(StateAxis(:s, categorical([:A, :B])))
-    stage = ArgmaxStage(layout;
-        choice_axis    = :s,
-        flow_payoff    = (cell, a; env) -> (a == :B ? 1.0 : 0.0),
-        next_state_idx = (cell, a) -> a == :A ? 1 : 2,
-    )
+    layout = GriddedLayout(:s => Discrete([:A, :B]))
+    stage = ArgmaxStage(layout; axis = :s, reward = [0.0 0.0; 1.0 1.0])
     V_end = randn(2)
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
 
@@ -224,9 +222,9 @@ end
 end
 
 @testset "adjoints(LogitChoiceStage) — dot-product test on forward" begin
-    layout = GriddedLayout(StateAxis(:a, discrete_finite([1, 2])))
+    layout = GriddedLayout(:a => Discrete([1, 2]))
     stage = LogitChoiceStage(layout;
-        choice_axis = :a,
+        axis        = :a,
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = 0.5,
     )
@@ -247,7 +245,7 @@ end
     # axis only, so the non-choice column is s = 1:
     #     P(j | i, s) = eψC[i,j] · W[j,s] / res[i,s].
     k = stage.kernel
-    P_from1 = [k.eψC[1, j] * k.value_weight[j, 1] / k.normalizer[1, 1] for j in 1:2]
+    P_from1 = [parent(k.eψC)[1, j] * k.value_weight[j, 1] / k.normalizer[1, 1] for j in 1:2]
     @test sum(P_from1) ≈ 1.0 atol = 1e-12
 
     e1 = Float64[1.0, 0.0]
@@ -263,12 +261,12 @@ end
     # Build the same stage twice — once with a static cost matrix, once with the
     # cost supplied as `FromEnv(:C)` — and assert the adjoints (i) run without
     # error and (ii) give the identical VJP at the same evaluated point.
-    layout = GriddedLayout(StateAxis(:loc, discrete_finite([1, 2, 3])))
+    layout = GriddedLayout(:loc => Discrete([1, 2, 3]))
     C      = [0.0 0.4 0.7; 0.4 0.0 0.3; 0.7 0.3 0.0]
     ε      = 0.5
 
-    static = LogitChoiceStage(layout; choice_axis = :loc, cost_matrix = C, ε = ε)
-    envcost = MigrationStage(layout; location_axis = :loc,
+    static = LogitChoiceStage(layout; axis = :loc, cost_matrix = C, ε = ε)
+    envcost = MigrationStage(layout; axis = :loc,
                              migration_cost = FromEnv(:C), ε = ε)
     env = (C = C,)
 
@@ -301,13 +299,13 @@ end
 
 @testset "adjoints(ConsumptionSavingsStage) — dot-product test on forward" begin
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([1.0, 2.0])),
-        StateAxis(:y, discrete_finite([1.0])),
+        :wealth => GriddedContinuous([1.0, 2.0]),
+        :y => Discrete([1.0]),
     )
     stage = ConsumptionSavingsStage(layout;
         β            = 0.95,
         utility      = (cell, c; env) -> log(c),
-        wealth_axis  = :wealth,
+        axis         = :wealth,
     )
     backward!(stage, zeros(2, 1), NamedTuple())  # populate policy
 
@@ -320,12 +318,13 @@ end
 end
 
 @testset "adjoints(ChainStage of linear-K stages) — dot-product test" begin
-    layout = GriddedLayout(StateAxis(:z, discrete_finite([0.5, 1.5])))
+    layout = GriddedLayout(:z => Discrete([0.5, 1.5]))
     P1 = [0.7 0.3; 0.4 0.6]
     P2 = [0.5 0.5; 0.2 0.8]
     s1 = MarkovStage(layout; axis = :z, transition_matrix = P1)
     s2 = MarkovStage(layout; axis = :z, transition_matrix = P2)
     chain = s1 ∘ s2
+    backward!(chain, randn(2), NamedTuple())   # seat both component kernels before forward! (§9 contract)
 
     Λ_start = abs.(randn(2)); Λ_start ./= sum(Λ_start)
     dΛ_end  = randn(2)
@@ -344,8 +343,8 @@ end
     # Verify the lift propagates through `define_moments!` (which now returns
     # a `ChainStage` whose `moments` field is non-empty).
     layout = GriddedLayout(
-        StateAxis(:wealth, continuous_grid([1.0, 2.0, 3.0])),
-        StateAxis(:income, [0.5, 1.5]),
+        :wealth => GriddedContinuous([1.0, 2.0, 3.0]),
+        :income => Discrete([0.5, 1.5]),
     )
     P = [0.5 0.5; 0.5 0.5]
     shock = MarkovStage(layout; axis = :income, transition_matrix = P)
