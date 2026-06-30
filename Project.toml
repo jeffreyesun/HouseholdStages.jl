@@ -1,6 +1,6 @@
 name = "HouseholdStages"
 uuid = "0c98d319-5992-4fdc-b5ff-08915dacd05b"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Jeffrey Sun <jeffreyesun@gmail.com>"]
 description = "Composable stages for the household layer of heterogeneous-agent macro models as axis-factored stratified Markov kernels with V/Λ duality, GPU-native code, and forward/reverse-mode AD."
 repository = "https://github.com/jeffreyesun/HouseholdStages.jl.git"
@@ -11,13 +11,23 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+
+[extensions]
+HouseholdStagesCUDAExt = "CUDA"
+
 [compat]
+CUDA = "5, 6"
 ForwardDiff = "1.3.3"
 NNlib = "0.9"
 julia = "1.10"
 
 [extras]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Test", "Random", "Statistics"]

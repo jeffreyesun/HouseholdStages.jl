@@ -45,7 +45,7 @@ Note: Much of the following list model implementations in `examples/` were const
 
 *A catalogue of which models have a **household block** representable by this package* — the
 within-period `V`/`Λ` stage chain only. It is **not** a list of full models the package solves; the
-package provides no outer-loop machinery (equilibria, firm blocks, market clearing).
+package provides no outer-loop machinery (equilibria, firm blocks, market clearing). There *is* a `solve_steady_state_given_env!` and `solve_transition_given_env_path!`, but these are not true ``equilibrium'' outer loops---they just solve the household block with no enforcement of equilibrium or market clearing.
 
 > **What this catalogs.** Which models in the heterogeneous-agent literature have a **household block**
 > — the within-period chain mapping the value `V` and distribution `Λ` — that *this package* can
@@ -123,7 +123,7 @@ reproduction, renormalization); `IdentityStage`.
 (domain-named `LogitChoiceStage` over a destination axis), `SearchMatchingStage` (effort→hazard with a
 tightness externality), `CapitalInvestmentStage`/`DurableAdjustmentStage` (continuous-argmax stock investment),
 `PortfolioStage`/`MeanVarianceStage`/`ScaleVarianceStage` (variance/portfolio choice over the
-`MPSKernel`/`MeanVarianceKernel`), `RationalInattentionStage`, `MixingStage`/`RetentionStage` (blend
+`MPSKernel`/`MeanVarianceKernel`), `MixingStage`/`RetentionStage` (blend
 kernels at a convex cost; `RetentionStage` = the `K_A=I` "pay not to transition" member),
 `LogitUtilityStage`, `KernelChoiceStage`/`ScaleChoiceStage`/`StreamingChoiceStage`, `ReproductionStage`,
 `ForgetfulSumStage`, and the **exit composite** `ExogenousExit`/`EndogenousExit`/`LogitEndogenousExit`

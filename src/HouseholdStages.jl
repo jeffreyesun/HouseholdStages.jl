@@ -151,8 +151,6 @@ include("stages/derived/investment.jl")         # CapitalInvestmentStage/Durable
 include("stages/derived/default_choice.jl")     # DefaultStage — gated ArgmaxStage (repay/default)
 include("stages/derived/directed_search.jl")    # DirectedSearchStage — LogitChoiceStage over submarkets
 include("stages/derived/exit.jl")               # ExogenousExit/EndogenousExit/LogitEndogenousExit — Choice ∘ Utility ∘ Markov over a transient :exiting axis (mass leaves)
-# RI-discrete is deliberately NOT a stage — it is the composition LogitChoice(ε=λ)∘UtilityStage(λ·log q)
-# (= LogitUtilityStage); see test/test_rational_inattention.jl for why the old RationalInattentionStage was cut.
 # Layer 10 — lifts: functorial re-typings
 include("lifts/jacobian.jl")
 include("lifts/gpu.jl")

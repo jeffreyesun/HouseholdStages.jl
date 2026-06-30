@@ -82,7 +82,7 @@ reproduction, renormalization); `IdentityStage`.
 (domain-named `LogitChoiceStage` over a destination axis), `SearchMatchingStage` (effort→hazard with a
 tightness externality), `CapitalInvestmentStage`/`DurableAdjustmentStage` (continuous-argmax stock investment),
 `PortfolioStage`/`MeanVarianceStage`/`ScaleVarianceStage` (variance/portfolio choice over the
-`MPSKernel`/`MeanVarianceKernel`), `RationalInattentionStage`, `MixingStage`/`RetentionStage` (blend
+`MPSKernel`/`MeanVarianceKernel`), `MixingStage`/`RetentionStage` (blend
 kernels at a convex cost; `RetentionStage` = the `K_A=I` "pay not to transition" member),
 `LogitUtilityStage`, `KernelChoiceStage`/`ScaleChoiceStage`/`StreamingChoiceStage`, `ReproductionStage`,
 `ForgetfulSumStage`, and the **exit composite** `ExogenousExit`/`EndogenousExit`/`LogitEndogenousExit`
