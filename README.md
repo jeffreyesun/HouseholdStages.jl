@@ -43,7 +43,5 @@ If you if you use this package or build on its methodology, please cite the work
 
 ## Examples
 
-In `examples/`, many models from the literature are constructed by building the household blocks using the HouseholdStages package. A catalogue of them, and more detailed explanation, is available in `EXAMPLES.md`
-
-**Note: Much of `EXAMPLES.md` and the model implementations in `examples/` were constructed by language models.**
+I use language models to (1) translate a large number of published papers' household blocks into the compositional stage algebra provided by this package, and (2) produce `EXAMPLES.md` providing further detail on these examples and their implementations.
 
