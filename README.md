@@ -37,6 +37,10 @@ Therefore, the contents of src/ are as follows:
 7. The product operator.
 8. Derived stages, consisting of composed/producted or wrapped primitive stages.
 
+## Citation
+
+If you if you use this package or build on its methodology, please cite the working paper currently contained in `paper_for_citation/`.
+
 ## Examples
 
 In `examples/`, many models from the literature are constructed by building the household blocks using the HouseholdStages package. A catalogue of them, and more detailed explanation, is available in `EXAMPLES.md`
