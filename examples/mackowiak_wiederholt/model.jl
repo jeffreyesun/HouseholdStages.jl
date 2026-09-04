@@ -36,7 +36,7 @@
 # What is faithful, and what is the gap. The MW mechanism is the ALLOCATION of
 # a finite attention capacity across MULTIPLE signals — aggregate vs
 # idiosyncratic — coupling their precisions through ONE budget constraint.
-# That coupled multi-signal budget is a recorded G3-adjacent gap (MODEL_CATALOG
+# That coupled multi-signal budget is a recorded G3-adjacent gap (EXAMPLES.md
 # §2 / gaps item 5): a single Shannon constraint over several precisions is not
 # one univariate stage, because each per-axis `MeanPreservingSpreadStage`
 # optimises its own θ independently — there is no shared-budget coupler in the

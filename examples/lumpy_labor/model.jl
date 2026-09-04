@@ -2,7 +2,7 @@
 # Lumpy / (S,s) labor adjustment (Cooper–Haltiwanger–Willis 2007) #
 ################################################################
 #
-# Household↔firm dictionary used here (§6 of MODEL_CATALOG.md):
+# Household↔firm dictionary used here (§6 of EXAMPLES.md):
 #   wealth `b`        ↔ employment level `n`            (the operative axis)
 #   income shock      ↔ productivity shock `z`          (MarkovStage)
 #   (S,s) durable buy ↔ lumpy / fixed-cost hiring-firing (keep/adjust ArgmaxStage, §5(i))

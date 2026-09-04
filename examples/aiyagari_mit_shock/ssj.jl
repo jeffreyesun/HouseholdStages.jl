@@ -15,7 +15,7 @@
 # `env_ss ± h` and is `O(h²)`. `compute_steady_state_gradient` gives the permanent-shock
 # comparative static `∂K_supplied/∂r`; it re-solves the steady state at `env_ss ± h` instead of
 # differentiating it, and `:fd` is its only mode, because differentiating fixed points is out of
-# scope for the package (`STAGES_ARCHITECTURE.md` §11, "What is differentiated, and what is not").
+# scope for the package.
 #
 # THE SELF-CHECK, AND WHAT LIMITS IT. `max|J_dual - J_fd|` is the `:fd` lane's own error rather
 # than a disagreement between two objects: `:dual` is exact, so the gap is what `h` costs.

@@ -2,7 +2,7 @@
 # Menu-cost price setting (Golosov–Lucas 2007; Nakamura–Steinsson 2010) — (S,s) on p #
 ################################################################
 #
-# Firm↔household dictionary (the (S,s) durable read on a different axis — §6 of MODEL_CATALOG.md):
+# Firm↔household dictionary (the (S,s) durable read on a different axis — §6 of EXAMPLES.md):
 #   wealth `b` / capital `k` ↔ the firm's RELATIVE (real) price `p`   (the operative DISCRETE axis)
 #   income / productivity shock ↔ idiosyncratic MARGINAL-COST shock `z` (MarkovStage, Rouwenhorst)
 #   (S,s) durable buy / lumpy invest ↔ menu-cost price RESET           (keep/reset ArgmaxStage, §5(i))

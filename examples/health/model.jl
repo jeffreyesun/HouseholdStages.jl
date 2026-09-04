@@ -40,8 +40,7 @@
 # is born alive at health `h0`, invests in health each age, and its alive-mass
 # decays along the survival curve over the life cycle. No stationarity-of-mass
 # requirement, so no birth source needed. This is the Grossman model in the
-# Galama–van Kippersluis life-cycle form. See `PART3_LITERATURE_MODELS.md` (the
-# Grossman health-investment and Grossman-mortality rows) and `examples/human_capital`
+# Galama–van Kippersluis life-cycle form. See `examples/human_capital`
 # / `examples/life_cycle` (the finite-horizon driver precedent).
 #
 # What is example-side (and allowed): the FINITE-HORIZON DRIVER. The age-specific

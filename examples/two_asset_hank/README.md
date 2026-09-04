@@ -31,7 +31,7 @@ model to a stationary steady state.
 ## Caveats
 - The `:illiquid_choice` grid makes the intermediate tensor `N_a×` larger (gridded). A future "one
   choice, two axes" primitive — or the portfolio-value reformulation (state `(W, a)`, liquid `= W−a`;
-  see `MODEL_CATALOG.md`) — would avoid it.
+  see `EXAMPLES.md`) — would avoid it.
 - This is a quadratic-cost version (smooth adjustment); a fixed cost would give the lumpy (S,s) margin.
 
 ## Run

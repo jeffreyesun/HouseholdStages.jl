@@ -7,8 +7,7 @@
 # to `HouseholdStages.solve_steady_state_given_env!`; the outer
 # tatonnement loop is rolled here — the library deliberately leaves
 # the "close-the-model" outer loop to consumers (calibration choices,
-# update rules, residual semantics are example-specific). See
-# `PROJECT_PLAN.md` Decisions log 2026-05-18 for the principle.
+# update rules, residual semantics are example-specific).
 #
 # The full walkthrough lives in `../notebooks/aiyagari.jl`.
 

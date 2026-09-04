@@ -2,7 +2,7 @@
 # Lumpy / non-convex investment (Khan–Thomas 2008) — (S,s) on k  #
 ################################################################
 #
-# Household↔firm dictionary used here (§6 of MODEL_CATALOG.md):
+# Household↔firm dictionary used here (§6 of EXAMPLES.md):
 #   wealth `b`        ↔ capital `k`                   (the operative continuous axis)
 #   income shock      ↔ productivity shock `z`        (MarkovStage)
 #   (S,s) durable buy ↔ lumpy / fixed-cost investment (keep/adjust ArgmaxStage, §5(i))

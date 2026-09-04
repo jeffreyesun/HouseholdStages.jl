@@ -2,7 +2,7 @@
 # Hopenhayn (1992) — firm entry & exit, the exit composite + Entry #
 ################################################################
 #
-# Household↔firm dictionary used here (§6 of MODEL_CATALOG.md):
+# Household↔firm dictionary used here (§6 of EXAMPLES.md):
 #   wealth/income shock ↔ productivity shock `z`      (MarkovStage)
 #   death               ↔ firm exit                   (EndogenousExit)
 #   bequest/value-of-death ↔ scrap / liquidation value (the REQUIRED `bequest` field)

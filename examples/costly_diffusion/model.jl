@@ -5,7 +5,7 @@
 # The "negative" of rational inattention: a household that pays to ADD
 # dispersion to its next-period wealth — a deliberate mean-preserving spread —
 # rather than to sharpen it. This is the θ↑ ("diffuse") reading of
-# `MeanPreservingSpreadStage` flagged in MODEL_CATALOG.md §7 (the one ◐ on the
+# `MeanPreservingSpreadStage` flagged in EXAMPLES.md §7 (the one ◐ on the
 # opposites table). It realizes that sign-flip as a SHIPPED, SOLVED example
 # while staying a pure composition of existing library stages.
 #
@@ -63,7 +63,7 @@
 #
 # Literature: the convexity mechanism is Vereshchagina & Hopenhayn (AER 2009);
 # the deliberate-diffusion / experimentation reading is the θ↑ member of the
-# variance-RI family (Sims 2003 read in reverse) — see MODEL_CATALOG.md §7.
+# variance-RI family (Sims 2003 read in reverse) — see EXAMPLES.md §7.
 
 using HouseholdStages
 

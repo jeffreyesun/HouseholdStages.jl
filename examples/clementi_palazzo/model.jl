@@ -11,7 +11,7 @@
 # draw productivity and start small, invest toward their efficient scale subject to a
 # convex adjustment cost, and exit endogenously when continuation falls below scrap.
 #
-# Household ↔ firm dictionary used here (§6 of MODEL_CATALOG.md):
+# Household ↔ firm dictionary used here (§6 of EXAMPLES.md):
 #   wealth `b`              ↔ capital `k`                  (the operative continuous axis)
 #   income / employment shock ↔ productivity `z`          (MarkovStage)
 #   saving                 ↔ physical investment `i = k'−(1−δ)k` (CapitalInvestmentStage)

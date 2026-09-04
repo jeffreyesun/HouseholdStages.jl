@@ -4,7 +4,7 @@
 
 # Two drivers, both rolling their own outer loop (the library supplies only the
 # per-env V/Λ fixed-point solve, per the "close-the-model loops live with the
-# consumer" principle in `../PLAN.md`):
+# consumer" principle):
 #
 #   1. Partial equilibrium — fix tightness θ exogenously, one inner solve. Exercises
 #      the stage's `FromEnv(:θ)` contract directly. Robust, no outer fixed point.

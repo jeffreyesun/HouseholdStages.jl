@@ -32,7 +32,7 @@ attention (no noise, no cost), larger `θ` is a noisier, cheaper read. The cost 
 The genuine Maćkowiak–Wiederholt mechanism is the **allocation of a finite attention capacity across
 multiple signals** — aggregate vs idiosyncratic — coupling their precisions through **one** budget
 constraint. That **coupled multi-signal attention budget is a recorded ◐/G3-adjacent gap**
-(MODEL_CATALOG §2; gaps item 5): a single Shannon constraint over several precisions is **not one
+(EXAMPLES.md §2; gaps item 5): a single Shannon constraint over several precisions is **not one
 univariate streaming stage**. Each per-axis `MeanPreservingSpreadStage` optimises its own `θ`
 independently — there is no shared-budget coupler in the per-axis vocabulary that ties the
 precision spent on `z` to the precision spent on the idiosyncratic state. Expressing it would need a

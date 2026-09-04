@@ -3,7 +3,7 @@
 The **"negative" of rational inattention**: a household that pays to *add*
 dispersion to its next-period wealth — a deliberate mean-preserving spread —
 rather than to sharpen it. This realizes the θ↑ ("diffuse") reading of
-`MeanPreservingSpreadStage` flagged in `MODEL_CATALOG.md` §7 (the one ◐ on the
+`MeanPreservingSpreadStage` flagged in `EXAMPLES.md` §7 (the one ◐ on the
 opposites table) as a **shipped, solved** example, while staying a pure
 composition of existing library stages.
 

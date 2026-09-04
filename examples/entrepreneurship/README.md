@@ -21,7 +21,7 @@ occupation axis. A `GaussianLoadingStage`'s risky technology `anchor`/`increment
 are scalars or `FromEnv`, never axis-closures, so a single business stage offers the same gamble to
 every occupation and cannot be switched on for one slice and off for another. The risk margin has to
 live in a per-leg stage — which is what the `⊕` build gives it, and which is the catalog's ◐
-(MODEL_CATALOG §2, limitation (a)).
+(EXAMPLES.md §2, limitation (a)).
 
 ## The block — one `⊕` leg per occupation
 
@@ -92,5 +92,5 @@ The occupation-axis moment and the direct `Λ`-slice agree (`0.033` both ways), 
 ## Literature
 
 Quadrini (2000, RED); Cagetti & De Nardi (2006, JPE); Vereshchagina & Hopenhayn (2009, AER) for the
-risk-margin convexity (`examples/risk_shifting`). MODEL_CATALOG §2 (entrepreneurship ◐) and §4
+risk-margin convexity (`examples/risk_shifting`). EXAMPLES.md §2 (entrepreneurship ◐) and §4
 (occupational choice as direction-control sugar).

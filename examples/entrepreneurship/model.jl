@@ -12,7 +12,7 @@
 #
 # READ THIS FIRST — why both occupational legs run the same chain.
 # ------------------------------------------------------------------
-# The catalog status is ◐ (MODEL_CATALOG §2), and the ◐ is one thing the library
+# The catalog status is ◐ (EXAMPLES.md §2), and the ◐ is one thing the library
 # cannot say: a `GaussianLoadingStage`'s risky technology
 # (`anchor`/`increment_mean`/`increment_sd`) is scalars or `FromEnv`, never
 # axis-closures, so ONE shared business stage offers the same gamble to every

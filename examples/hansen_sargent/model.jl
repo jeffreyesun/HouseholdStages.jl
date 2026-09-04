@@ -30,7 +30,7 @@
 #
 # EXACTLY the entropic certainty equivalent with multiplier θ = |ε|. Robustness
 # "comes for free" as the soft-MIN member of the very same log-sum-exp that
-# gives logit discrete choice at ε>0 (see MODEL_CATALOG.md §7). The household
+# gives logit discrete choice at ε>0 (see EXAMPLES.md §7). The household
 # block is three existing library stages, no bespoke stage rolled here —
 #
 #     RobustExpectation ∘ Receipt ∘ ConsumptionSavings

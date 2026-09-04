@@ -25,7 +25,7 @@
 # so a Markov ability state would be economically inert through the stage. The
 # age-specific ability PROFILE instead enters through `env` each age — that is
 # driver logic (the finite-horizon backward/forward in `steady_state.jl`), not a
-# household stage. See `PART3_LITERATURE_MODELS.md` (the human-capital row).
+# household stage.
 #
 # The effort cost is the inverted Ben-Porath production function. New human
 # capital `Q = a·(s·h)^γ` from time share `s` at ability `a` ⇒ to deliver gross

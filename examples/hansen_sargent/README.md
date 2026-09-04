@@ -1,6 +1,6 @@
 # Hansen–Sargent multiplier preferences / robust savings
 
-**Hansen–Sargent (2008) multiplier preferences; Hansen–Sargent–Tallarini (1999) risk-sensitive control.** MODEL_CATALOG.md §2 (robustness) and §7 (the headline negative-ε flip). Status: ✅.
+**Hansen–Sargent (2008) multiplier preferences; Hansen–Sargent–Tallarini (1999) risk-sensitive control.** EXAMPLES.md §2 (robustness) and §7 (the headline negative-ε flip). Status: ✅.
 
 ## Mechanism
 

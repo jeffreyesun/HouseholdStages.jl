@@ -1,6 +1,6 @@
 # Ilut–Schneider (2014) — ambiguous business cycles
 
-**Ilut & Schneider (2014, AER), "Ambiguous Business Cycles."** MODEL_CATALOG.md §2 (robustness & ambiguity). Status: ◐ — the **entropic/smoothed form is built here ✅**; the literal set-based max-min is its θ → 0⁺ limit.
+**Ilut & Schneider (2014, AER), "Ambiguous Business Cycles."** EXAMPLES.md §2 (robustness & ambiguity). Status: ◐ — the **entropic/smoothed form is built here ✅**; the literal set-based max-min is its θ → 0⁺ limit.
 
 ## Mechanism
 

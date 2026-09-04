@@ -16,9 +16,8 @@
 # the household chain itself stays minimal — `(;K, r, w)` — exactly
 # matching the steady-state example; `A` enters only through prices.
 #
-# Per the project's per-example self-contained discipline (see
-# `HouseholdStages/examples/PLAN.md`), the model code is duplicated rather than
-# imported from `../aiyagari/model.jl`. The wealth grid is log-spaced
+# Per the project's per-example self-contained discipline, the model code is
+# duplicated rather than imported from `../aiyagari/model.jl`. The wealth grid is log-spaced
 # for the same reason as in Aiyagari.
 
 using HouseholdStages

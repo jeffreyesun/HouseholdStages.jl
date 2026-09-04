@@ -16,7 +16,7 @@
 # ONLY the :illiquid axis — an ordinary single-axis argmax. W is untouched by the rebalance, and
 # liquid = W − a' automatically reflects the deposit. There is NO auxiliary :illiquid_choice axis and
 # NO n_choice× memory blow-up (contrast examples/two_asset_hank, which routes the choice through a
-# separate axis). See PART3_LITERATURE_MODELS.md, "Route A′".
+# separate axis).
 #
 # Household block (time order), existing stages only, NO bespoke stage:
 #

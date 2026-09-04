@@ -91,8 +91,8 @@ mass to the constraint; raising `r` toward `1/β − 1` inflates it. Raising σ
 ## Relation to the sibling examples
 
 The household block is byte-near `examples/aiyagari` and `examples/huggett`
-— that redundancy is expected and intentional (per `examples/PLAN.md`, each
-example owns its own model primitives). What is distinct here:
+— that redundancy is expected and intentional (each example owns its own
+model primitives). What is distinct here:
 
 - **vs. Aiyagari** — no Cobb-Douglas production and no tatonnement on `K`;
   `r` is fixed exogenously rather than `= F_K − δ`. Partial equilibrium.
