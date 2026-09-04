@@ -78,7 +78,7 @@ function habit_household(p = HabitParams())
     shock   = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(block;                                    # cash-on-hand x = (1+r)a + w·y
         wealth_post = (; wealth, income) -> (1 + p.r) * wealth + p.w * income)   # defaults: (; axis = :wealth)
-    choose  = ArgmaxStage(full; axis = :savings_choice, reward = zeros(p.N_w, 1))
+    choose  = ArgmaxStage(block, full; axis = :savings_choice, reward = zeros(p.N_w, 1))
     felicity = UtilityStage(full; utility = (; wealth, savings_choice, habit) ->     # u(c, S), c = x − b'
         u_habit(wealth - wgrid[Int(savings_choice)], habit, p))
     discount = TimeDiscountingStage(full; β = p.β)

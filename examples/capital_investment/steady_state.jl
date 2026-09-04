@@ -29,7 +29,7 @@ function capital_investment_steady_state(p = capital_investment_params; verbosit
     res = solve_steady_state_given_env!(hh, env)
     (; V, Λ, history) = res
 
-    cells  = cell_array(output_layout(hh))            # (N_k, N_z) cells with fields (:k, :z)
+    cells  = cell_array(end_layout(hh))            # (N_k, N_z) cells with fields (:k, :z)
     k_vals = getfield.(cells, :k)
     z_vals = getfield.(cells, :z)
 

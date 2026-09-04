@@ -51,9 +51,9 @@ const mit_shock_params = MITShockParams()
 #--------------------------#
 
 """
-Build the moment-attached Aiyagari household block
-`IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavings` (same shape as
-the steady-state example).
+Build the Aiyagari household block
+`IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavings` with the
+`K_supplied = ∫ wealth dΛ` moment attached.
 """
 function aiyagari_household(p = mit_shock_params)
     layout = GriddedLayout(
@@ -65,8 +65,8 @@ function aiyagari_household(p = mit_shock_params)
     receipt = IncomeStage(layout) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;
@@ -95,11 +95,8 @@ end
 #---------------------------------#
 
 """
-Permanent TFP shock: `A[t] = A_0` for all `t = 1..T`. The new TFP level
-arrives at period 1 (unanticipated at t = 0, then anticipated forever
-after) and stays there. Returns a length-`T` vector. Defined locally
-because the library deliberately leaves transition-side utilities to
-the consumer.
+Permanent TFP shock: `A[t] = A_0` for all `t = 1..T`. The step arrives at
+period 1 — unanticipated at `t = 0`, anticipated forever after.
 """
 function tfp_path(T::Int; A_0::Float64 = 1.05)
     return fill(A_0, T)

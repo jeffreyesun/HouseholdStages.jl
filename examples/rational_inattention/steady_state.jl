@@ -6,7 +6,7 @@
 # is a single inner V/Λ fixed-point solve at the given env. (Contrast the
 # Aiyagari/Krusell–Smith examples, which roll a tatonnement on K̄.) The
 # whole point is that the household block is library stages only — the
-# attention leaf is a `ScaleVarianceStage`, no bespoke household stage.
+# attention leaf is a `MeanPreservingSpreadStage`, no bespoke household stage.
 # See `model.jl`.
 
 include("model.jl")
@@ -25,7 +25,7 @@ function rational_inattention_steady_state(p = rational_inattention_params;
     res = solve_steady_state_given_env!(hh, env)
     m   = compute_moments(hh, res.Λ, env)
 
-    θ = HouseholdStages.policy(hh.buffer.stages[end])      # the Attention (ScaleVarianceStage) leaf
+    θ = HouseholdStages.policy(hh.buffer.stages[end])      # the Attention (MeanPreservingSpreadStage) leaf
     θ_lo, θ_hi, θ_mean = minimum(θ), maximum(θ), sum(θ) / length(θ)
     attentive_frac = sum(θ .> 0) / length(θ)               # share of cells choosing positive dispersion
 
@@ -33,7 +33,7 @@ function rational_inattention_steady_state(p = rational_inattention_params;
         @printf "Variance-RI steady state (r = %.3f, w = %.2f, σ = %.1f, λ = %.4f)\n" r w p.σ λ
         @printf "  mass(Λ)          = %.6f\n"     sum(res.Λ)
         @printf "  mean wealth      = %.4f\n"     m.mean_wealth
-        @printf "  dispersion θ*    = [%.2f, %.2f], grid-mean %.3f\n" θ_lo θ_hi θ_mean
+        @printf "  dispersion θ*    = [%.2f, %.2f], cell-mean %.3f\n" θ_lo θ_hi θ_mean
         @printf "  frac(θ* > 0)     = %.3f  (rest choose perfect attention)\n" attentive_frac
         @printf "  VFI iters = %d, Λ iters = %d\n" res.history.vfi_iters res.history.lambda_iters
     end

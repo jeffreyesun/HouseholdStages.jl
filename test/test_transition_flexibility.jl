@@ -12,7 +12,7 @@ using LinearAlgebra: I
 #       when env changes, doesn't when it doesn't (the cache + the refresh-vs-static
 #       switch on the transition closure's `env` kwarg);
 #   (3) an effort/θ-indexed matching-style transition — a Bernoulli row whose
-#       job-finding probability `p(θ)` rides an env scalar (previews SearchMatching
+#       job-finding probability `p(θ)` rides an env scalar (previews tightness-dependent matching
 #       as a *pure transition* test, no choice-collapse here).
 #
 # Internals (the dense-kernel builder `dense_kernel` from test_kernel.jl — same module
@@ -89,8 +89,8 @@ end
 @testset "Env-dependent transition (FromEnv migration cost) — re-materialisation" begin
     # A migration logit whose cost field C[origin,destination] is supplied via env
     # (FromEnv(:C)). Changing env re-runs backward! and re-materialises eψC =
-    # exp(−C/ε) (hence the policy); re-running at the SAME (V_end, env) is
-    # deterministic. The modern stage has no freshness cache, so we observe the
+    # exp(−Cᵀ/ε) (hence the policy); re-running at the SAME (V_end, env) is
+    # deterministic. The stage has no freshness cache, so we observe the
     # re-materialisation directly through the kernel's eψC.
     layout = GriddedLayout(
         :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
@@ -107,7 +107,7 @@ end
     C_dear  = [0.0 3.0; 3.0 0.0]                      # costly to move
 
     V_cheap   = copy(backward!(stage, V_end, (C = C_cheap,)))
-    eψC_cheap = copy(parent(stage.kernel.eψC))      # exp(−C_cheap/ε), seated by backward!
+    eψC_cheap = copy(parent(stage.kernel.eψC))      # exp(−C_cheapᵀ/ε), seated by backward!
 
     # Forward at the same (V_end, env) pushes mass conservatively.
     Λ0 = fill(1.0 / (n_w * 2), n_w, 2)
@@ -163,7 +163,7 @@ end
     # We assemble the 2×2 forward matrix K(θ), contract it as a StratifiedKernel,
     # and check (a) duality, (b) different θ ⇒ different forward mass — the SaM
     # "env-dependent stochastic transition" piece, as a PURE transition (no
-    # effort choice-collapse here; that is the separate SearchMatching dispatch).
+    # effort choice-collapse here; that is the search examples' MixingStage lottery).
     layout = GriddedLayout(
         :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
         :emp => Discrete([:unemp, :emp]),

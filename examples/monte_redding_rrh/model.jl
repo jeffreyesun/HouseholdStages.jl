@@ -110,7 +110,7 @@ function mrrh_household(p = params)
         end)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = commute ∘ amenity ∘ receipt ∘ savings
 

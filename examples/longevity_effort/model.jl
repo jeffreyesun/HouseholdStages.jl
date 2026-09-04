@@ -116,7 +116,7 @@ function longevity_household(p = longevity_params)
         wealth_post = (; wealth, env) -> (1 + env.r) * wealth + env.y)
     savings = ConsumptionSavingsStage(layout;
         β            = p.β,
-        utility      = (cell, c; env) -> cell.alive == :dead ? 0.0 :
+        utility      = (cell, c) -> cell.alive == :dead ? 0.0 :
                                          p.flow_alive + u_crra(c, Val(p.σ)),
         utility_axes = (:alive,))    # utility reads :alive beyond the operative :wealth axis
 

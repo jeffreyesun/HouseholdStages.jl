@@ -90,7 +90,7 @@ function wiu_household(p = wiu_params)
         β       = p.β,
         # WIU felicity: consumption utility + direct taste for next-period
         # wealth b' = cell.wealth − c. u_crra masks b' ≤ 0 to -Inf.
-        utility = (cell, c; env) ->
+        utility = (cell, c) ->
             u_crra(c, Val(p.σ)) + p.χ * u_crra(cell.wealth - c, Val(p.σ_w)),
     )
 

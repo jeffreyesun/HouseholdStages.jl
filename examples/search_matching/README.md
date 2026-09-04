@@ -8,22 +8,34 @@ pinned by firms' free-entry vacancy posting, computed in the driver.
 
 ## The household block
 
-The within-period problem is a three-stage chain, in time order:
+The within-period problem is a four-stage chain, in time order:
 
 ```
-SearchMatchingStage ∘ IncomeReceipt ∘ ConsumptionSavingsStage
+Separation ∘ Matching ∘ IncomeReceipt ∘ ConsumptionSavingsStage
 ```
+
+The first two legs ship as **one library call**: `SearchMatchingStage` (derived
+sugar) expands to exactly `MarkovStage(separation) ∘ MixingStage(job-search lottery)`;
+chains flatten, so the chain leaves are unchanged. The cost/policy recipe is
+single-homed in the package (`src/stages/derived/search_matching.jl`).
 
 | Stage | Library stage | What it does |
 |---|---|---|
-| `SearchMatchingStage` | `SearchMatchingStage` | Unemployed (`emp = 1`) choose search effort `e` from an internal grid; effort costs `cost(e) = χe²/2` utils and finds a job w.p. `p(e, θ) = 1 − exp(−A·e·θ)`. Employed (`emp = 2`) separate at rate `δ`. Backward maxes over effort and stores the effort policy; forward replays the θ-dependent matching row + separation. `θ` rides `FromEnv(:θ)`. |
+| `Separation` | `MarkovStage` (axis `:emp`), via `SearchMatchingStage` | Employed (`emp = 2`) lose their job w.p. `δ` (transition `[1 0; δ 1−δ]`). Runs **first**, so a worker separated this period searches this same period. |
+| `Matching` | `MixingStage` (axis `:emp`), via `SearchMatchingStage` | Unemployed (`emp = 1`) **choose their job-finding probability** `p ∈ [0, 1]` directly — the lottery over `K_A =` "search succeeds" (`[0 1; 0 1]`) and `K_B =` "search fails" (identity); the employed rows coincide, so the employed choice is degenerate (`p* = 0`, cost 0). Convex utils cost `c(p) = κ_s·((1−p)log(1−p) + p)`, closed-form argmax `p*(y) = 1 − exp(−y/κ_s)`; the scale `κ_s = χ/(A_match·θ)` reads `θ` from `env` (the sugar's default). |
 | `IncomeReceipt` | `WealthChangeStage` | `b ↦ (1+r)·b + income(emp)`: the employed earn wage `w`, the unemployed earn benefit `b_u`. |
 | `ConsumptionSavingsStage` | `ConsumptionSavingsStage` | Pick `b_end` on the wealth grid; implicit budget `c = b_in − b_end`; CRRA utility, divide-and-conquer monotone search. |
 
-The effort cost is a **utility** cost (subtracted in the value recursion), as in
-McCall search — not a resource drain on the budget. The labor axis `:emp` is
-categorical (`[:unemp, :emp]`); the wealth axis is a log-spaced grid (dense near the
-borrowing constraint, where policies are most nonlinear).
+The search cost is a **utility** cost (subtracted in the value recursion), as in
+McCall search — not a resource drain on the budget. The scale `κ_s = χ/(A_match·θ)`
+is calibrated so the marginal probability cost `c′(p) = −κ_s·log(1−p)` equals the
+marginal effort disutility `χ·e(p)` at the effort `e(p) = −log(1−p)/(A·θ)` that the
+matching technology `p = 1 − exp(−A·e·θ)` requires — so higher tightness means
+cheaper search and higher employment. **Timing:** separation runs first, so a worker
+who loses their job this period searches in the same period rather than waiting one
+period out. The labor axis `:emp` is categorical (`[:unemp, :emp]`); the
+wealth axis is a log-spaced grid (dense near the borrowing constraint, where
+policies are most nonlinear).
 
 No new stage, kernel, or per-cell household value/transition function is defined.
 The firm side and tightness closure are plain outer-loop arithmetic.
@@ -55,8 +67,11 @@ julia --project=. examples/search_matching/steady_state.jl
 ```
 
 At the baseline calibration the driver reports the PE employment/wealth trade-off
-across `θ ∈ {0.5, 1, 2, 4}` and the free-entry GE: `θ* ≈ 6.01`, `q(θ*) ≈ 0.204`,
-employment ≈ 0.90, with the free-entry residual driven below `1e-6`.
+across `θ ∈ {0.5, 1, 2, 4}` (employment 0.94 → 1.00, precautionary wealth falling)
+and the free-entry GE: `θ* ≈ 6.01`, `q(θ*) ≈ 0.204`, employment ≈ 1.00, with the
+free-entry residual driven below `1e-6`. `θ*` is set purely by the firm side — the
+free-entry condition does not involve the household block — so household
+calibration moves employment and wealth but not the equilibrium tightness.
 
 ## Parameters (baseline)
 

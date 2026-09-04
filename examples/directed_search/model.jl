@@ -143,9 +143,9 @@ function directed_search_household(p = directed_search_params)
         end)
 
     # (4) Savings on the wealth grid.
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = search ∘ matching ∘ receipt ∘ savings
     return define_moments!(hh;

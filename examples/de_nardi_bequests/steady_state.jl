@@ -63,8 +63,8 @@ function de_nardi_solve(p = de_nardi_params; max_outer = 60, tol = 1e-7, verbosi
     hh      = de_nardi_household(p)
     product = hh.buffer.stages[1]
     comp    = product.buffer.components
-    comp_layout = input_layout(comp[1])
-    out_layout  = product.buffer.output_layout
+    comp_layout = start_layout(comp[1])
+    out_layout  = end_layout(product)
     nw, nε, N = p.N_w, length(p.ε_grid), p.N
 
     env_age(a) = (; r = p.r, y = dn_age_earnings(a, p), age = a)

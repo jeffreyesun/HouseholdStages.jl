@@ -135,7 +135,7 @@ function dfj_household(p = dfj_params)
             max((1 + env.r) * wealth + env.pension - dfj_medical(health, env.age, p), p.c_floor))
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
     # Health-and-age-dependent mortality is exactly ExogenousExit's `survival` dep closure.
     exit = ExogenousExit(layout;

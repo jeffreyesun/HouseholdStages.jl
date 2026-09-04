@@ -33,7 +33,7 @@
 #   effort_cost(i; env) = env.R · (i / env.a)^{1/γ}.
 # With `γ ∈ (0,1)` this is convex in `i` (exponent `1/γ > 1`), so the reward
 # `R·h − effort_cost(h' − (1−δ)h)` is supermodular in `(h', h)` (cross-partial
-# `(1−δ)·cost'' ≥ 0`) and `CapitalInvestmentStage`'s `:divide_conquer` monotone solve is
+# `(1−δ)·cost'' ≥ 0`) and `CapitalInvestmentStage`'s divide-and-conquer monotone solve is
 # valid. Higher ability `a` lowers the cost — the engine of the life-cycle.
 
 using HouseholdStages
@@ -87,7 +87,7 @@ function human_capital_household(p = human_capital_params)
         depreciation    = p.δ,
         production      = (h; env) -> env.R * h,
         effort_cost     = (i; env) -> i <= 0 ? 0.0 : env.R * (i / env.a)^(1 / p.γ))
-        # defaults: (; axis = :h, monotone_search = :divide_conquer, assume_monotone = false)
+        # defaults: (; axis = :h)
 
     return define_moments!(invest;
         mean_h        = at_end(integrand = :h, reduce = sum),

@@ -32,11 +32,7 @@
 # The sector choice is resolved on the SAME timeline as a spatial migration
 # choice (cf. `../spatial/model.jl`): the worker sees their productivity
 # draw, then chooses a sector (logit-smoothed, paying the switching cost),
-# then receives the sector wage and chooses savings. Because the sector
-# enters earnings through `WealthChangeStage` reading `w[sector]` from env,
-# and the switching cost enters the logit directly, the whole block is
-# assembled from existing stages — no per-cell household value/transition
-# logic is rolled here.
+# then receives the sector wage and chooses savings.
 #
 # The wealth grid is log-spaced (dense near zero where the borrowing
 # constraint binds, coarse at the top so the post-earnings wealth stays
@@ -98,11 +94,9 @@ switching_cost_matrix(p = params) =
 #--------------------------#
 
 """
-Build the moment-attached Roy occupational-choice household block
+Build the Roy occupational-choice household block
 `ProductivityShock ∘ SectorSwitch ∘ Earnings ∘ ConsumptionSavings`, with
-aggregate wealth and per-sector population/wealth moments attached at the
-end. The wealth-axis log grid and the four-stage layout are inlined here.
-Every stage is an existing library stage.
+aggregate wealth and per-sector population/wealth moments attached at the end.
 """
 function sectoral_household(p = params)
     layout = GriddedLayout(
@@ -124,8 +118,8 @@ function sectoral_household(p = params)
     )
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        # defaults: (; axis = :wealth, monotone_search = :divide_conquer, assume_monotone = false, utility_axes = nothing)
+        utility         = (cell, c) -> u_crra(c, Val(p.σ)),
+        # defaults: (; axis = :wealth, skip_monotonicity_check = false, utility_axes = nothing)
     )
 
     hh = shock ∘ switch ∘ earnings ∘ savings

@@ -115,9 +115,8 @@ function perpetual_youth_household(p = perpetual_youth_params)
     )
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility         = (cell, c) -> u_crra(c, Val(p.σ)),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
     exit  = ExogenousExit(layout; survival = 1 - p.δ, bequest = p.bequest)
     entry = EntryStage(layout; entry = g)

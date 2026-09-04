@@ -30,7 +30,7 @@ function dfj_solve(p = dfj_params; verbosity = 1)
     hh      = dfj_household(p)
     product = hh.buffer.stages[1]
     comp    = product.buffer.components
-    comp_layout = input_layout(comp[1])
+    comp_layout = start_layout(comp[1])
     nw, nh, N = p.N_w, size(p.P_h, 1), p.N
 
     env_age(a) = (; r = p.r, age = a, pension = p.pension)

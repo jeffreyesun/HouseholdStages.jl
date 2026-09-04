@@ -3,43 +3,30 @@
 Occupational choice — worker vs (productive, risky, limited-liability) **entrepreneur** — as the
 engine of wealth concentration. High-productivity households sort into entrepreneurship, capture the
 productivity boost on their invested wealth, and accumulate into the top tail. **Catalog status: ◐.**
-This folder is BOTH a clean build *and* a precise give-up: the literal occupational form is not a
-straight composition, but the uniform-leg reformulation the catalog names *is*, and it solves.
+The occupational margin builds as a straight composition; the ◐ is one thing the library cannot say,
+named below.
 
-## The give-up — why the literal form is not a straight composition
+## Why both legs carry a `Business` stage
 
-The natural occupational model has a worker spine and an entrepreneur spine with an **extra** risk
-stage:
+`⊕`/`product` asks its legs to share a start layout and an end layout and leaves their specs free, so
+a worker spine and an entrepreneur spine with an extra risk stage join as written. The legs here are
+structurally uniform anyway, for a modelling reason: the worker's asset earns the safe return `R_f`,
+and that return **is** the `Business` stage's `anchor`. Dropping the stage from the worker leg would
+drop the safe return with it, so the worker carries a *degenerate* `Business` — zero excess mean, a
+numerically-negligible excess sd (the Gaussian stage requires `σ > 0`) — and the identity branch of
+`Realize`.
 
-```
-worker_leg       = Receipt ∘ Savings                          # 4 expanded stages
-entrepreneur_leg = Receipt ∘ Savings ∘ Business(MeanVariance)  # 5 expanded stages
-product(worker_leg, entrepreneur_leg; axis = :occupation)      # ← REJECTED
-```
+What the occupational margin cannot be built from is ONE shared business stage gated on the
+occupation axis. A `GaussianLoadingStage`'s risky technology `anchor`/`increment_mean`/`increment_sd`
+are scalars or `FromEnv`, never axis-closures, so a single business stage offers the same gamble to
+every occupation and cannot be switched on for one slice and off for another. The risk margin has to
+live in a per-leg stage — which is what the `⊕` build gives it, and which is the catalog's ◐
+(MODEL_CATALOG §2, limitation (a)).
 
-`product`/`⊕` requires every leg to have the **identical concrete Spec type** —
-`ProductStageSpec` asserts `all(s -> typeof(s) === first_type, components)`. A `ChainStage` is
-`ChainStageSpec{Stages<:Tuple}`, **parameterised on the tuple of its component spec types**, so a
-4-stage chain and a 5-stage chain are *different concrete types*. The assertion fails (verified):
+## The block — one `⊕` leg per occupation
 
-```
-AssertionError: all((s -> typeof(s) === first_type), components)
-```
-
-This is the documented ◐: **distinct stage CHAINS per leg** — the entrepreneur having a stage the
-worker lacks — is per-axis gating the library deliberately does not offer. (The single-chain
-`:occupation`-axis route used by `examples/indivisible_labor`, where downstream `WealthChangeStage`
-closures *read* the chosen indicator, also cannot help here: the entrepreneur's distinguishing
-feature is the `MeanVarianceStage` itself, and a `MeanVarianceStage`'s risky technology
-`shares`/`risky_returns`/`probs` are NOT axis-closures — a single shared business stage offers the
-gamble to *all* occupations and cannot be switched on for one slice and off for another.)
-
-## The clean exit that DOES solve — a fully separate `⊕` leg
-
-The catalog names two clean exits, "a wealth-floor or a fully separate `⊕` leg." This example takes
-the **separate-`⊕`-leg** exit. Make the two legs **structurally uniform** by giving BOTH the same
-chain and letting the worker carry a *degenerate* `Business` (a `MeanVarianceStage` whose risky
-returns equal the risk-free return — a safe asset) and the identity branch of `Realize`:
+The catalog names two routes to the entrepreneurial risk margin, "a wealth-floor or a fully separate
+`⊕` leg." This example takes the **separate-`⊕`-leg** route:
 
 ```
 OccChoice ∘ ⊕_occupation{ worker_leg, entrepreneur_leg }
@@ -52,22 +39,22 @@ each leg:  Receipt ∘ Savings ∘ Business ∘ Realize ∘ ZShock
 | `OccChoice` | `ArgmaxStage` (`:occupation`) | per `(wealth, z)`, pick the occupation with higher continuation, less `κ` |
 | `Receipt` | `WealthChangeStage` | `a ↦ a + wage` (worker wage `w`; entrepreneur `w_e < w`) |
 | `Savings` | `ConsumptionSavingsStage` | pick the stake `a'`, `c = x − a'`, CRRA |
-| `Business` | `MeanVarianceStage` | worker: degenerate safe asset; entrepreneur: mean-neutral two-point project, intensity θ |
+| `Business` | `GaussianLoadingStage` (the portfolio stage read as a business-risk dial: anchor = `R_f`, increment = the project's excess payoff) | worker: degenerate safe asset; entrepreneur: mean-neutral Gaussian project (moment-matched to the succeed/fail bet), continuous intensity θ |
 | `Realize` | `WealthChangeStage` | entrepreneur `a ↦ max(z·a, a_floor)`; worker `a ↦ max(a, a_floor)` |
 | `ZShock` | `MarkovStage` (`:z`) | productivity transitions for next period |
 
-The legs differ **only in captured VALUES** (`wage`, `business_returns`) and a captured **Bool**
-(`entrepreneur`, branching the shared `Realize` closure). Because every closure is defined at one
-syntactic site (a single `entrepreneurship_leg` builder), the closure *types* match and the two
-`ChainStageSpec` types are identical — exactly the `examples/discount_heterogeneity` device (one
-builder, parameterised by value). `product` accepts them; the `ArgmaxStage` occupational choice
-composes on top and the whole block solves to a stationary distribution. **No bespoke stage
-anywhere.** The Vereshchagina–Hopenhayn **wealth-floor** in `examples/risk_shifting` is the OTHER
-clean exit (it captures the entrepreneurial risk margin gating-free, with no occupation axis).
+The legs differ **only in captured VALUES** (`wage`, the excess moments `(excess_mean, excess_sd)`)
+and a captured **Bool** (`entrepreneur`, branching the shared `Realize` closure) — one
+`entrepreneurship_leg` builder parameterised by value, exactly the `examples/discount_heterogeneity`
+device. They share their two boundary layouts, which is what `⊕` asks of its legs; the `ArgmaxStage`
+occupational choice composes on top and the whole block solves to a stationary distribution. **No
+bespoke stage anywhere.** The Vereshchagina–Hopenhayn **wealth-floor** in `examples/risk_shifting` is
+the other route to the same margin (it captures the entrepreneurial risk margin with no occupation
+axis at all).
 
-## What the constant-returns `MeanVarianceStage` forces (honest)
+## What the constant-returns `GaussianLoadingStage` forces (honest)
 
-A streaming `MeanVarianceStage` is **constant-returns**, and its returns cannot read the
+A streaming `GaussianLoadingStage` is **constant-returns**, and its returns cannot read the
 productivity / occupation axis. Three dead ends follow, and they shaped the calibration:
 
 1. A mean **premium** (`E[R_business] > R_f`) lets the patient rich accumulate without bound — no
@@ -91,14 +78,14 @@ ability + self-financed accumulation), realised within the streaming vocabulary.
 
 `julia --project=. examples/entrepreneurship/steady_state.jl`:
 
-- **A small entrepreneurial elite.** Entrepreneur population share `≈ 0.034` — a few percent, as in
+- **A small entrepreneurial elite.** Entrepreneur population share `≈ 0.033` — a few percent, as in
   the data and in Cagetti–De Nardi.
-- **Wealth concentration.** Top-10% wealth share `≈ 0.63`; entrepreneurs hold `≈ 2.5×` the worker's
+- **Wealth concentration.** Top-10% wealth share `≈ 0.64`; entrepreneurs hold `≈ 2.5×` the worker's
   mean wealth. The productive entrepreneurs are the top tail.
 - **Comparative static.** A steeper business success multiple `R_up` pulls slightly more households
-  into entrepreneurship (`share 0.037 → 0.045` for `R_up = 1.45 → 1.70`).
+  into entrepreneurship (`share 0.035 → 0.043` for `R_up = 1.45 → 1.70`).
 
-The occupation-axis moment and the direct `Λ`-slice agree (`0.034` both ways), validating the
+The occupation-axis moment and the direct `Λ`-slice agree (`0.033` both ways), validating the
 `:occupation` accounting. Partial equilibrium — no market clears, so the outer loop is a single
 `solve_steady_state_given_env!`.
 

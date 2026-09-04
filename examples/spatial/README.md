@@ -52,7 +52,6 @@ function spatial_household(p = params)
         β               = p.β,
         utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
 
     hh = shock ∘ move ∘ receipt ∘ savings
@@ -88,15 +87,15 @@ taste-shock scale; the kernel computes
 ```
 
 and backward yields the log-sum-exp value at each cell. The cost
-matrix is stored on the Spec; a per-destination payoff shifter (the old
-`amenity`) is now a `UtilityStage` composed before the logit
-(`LogitChoiceStage ∘ UtilityStage(u)`), not a stage field. No user closure for
+matrix is stored on the Spec; a per-destination payoff shifter (an amenity, say)
+is expressed as a `UtilityStage` composed before the logit
+(`LogitChoiceStage ∘ UtilityStage(u)`), not as a stage field. No user closure for
 the cost; shape is checked at construction; the cost matrix flows through
 `with_eltype` as shared static data for ForwardDiff lifts.
 
 ## Per-location moments via integrand closures
 
-`lift_moments` (now `define_moments!`) supports integrand dep closures that
+`define_moments!` supports integrand dep closures that
 declare the axes they read — which is how per-location capital is computed
 without a dedicated "per-axis" moment-spec kwarg:
 

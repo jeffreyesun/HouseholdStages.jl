@@ -16,12 +16,19 @@ The household block is a pure composition of **existing** library stages (`∘` 
 the LEFT stage first):
 
 ```
-Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings
+Separation ∘ Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings
 ```
+
+The first two legs ship as **one library call**: `SearchMatchingStage` (derived
+sugar) expands to exactly `MarkovStage(separation) ∘ MixingStage(job-search lottery)`;
+chains flatten, so the chain leaves are unchanged, and the probability-space
+cost/policy recipe is single-homed in the package
+(`src/stages/derived/search_matching.jl`).
 
 | Stage | Library stage | Role |
 |---|---|---|
-| `Matching`            | `SearchMatchingStage` (axis `:emp`) | Unemployed choose search effort `e` at cost `χe²/2`, find a job w.p. `1−exp(−A·e·θ)`; employed separate at `δ`. Tightness `θ` fixed (partial equilibrium). `:wealth`/`:skill` ride as spectators. |
+| `Separation`          | `MarkovStage` (axis `:emp`), via `SearchMatchingStage` | Employed separate at `δ` (`[1 0; δ 1−δ]`), BEFORE matching — the separated search the same period, so a spell begins only if search also fails. |
+| `Matching`            | `MixingStage` (axis `:emp`), via `SearchMatchingStage` | Unemployed choose their job-finding probability `p` — the lottery over "success" (`[0 1; 0 1]`) and "fail" (identity) kernels — at convex utils cost `c(p) = κ_s·((1−p)log(1−p) + p)`, `κ_s = χ/(A_match·θ)` with `θ` from `env` (fixed here, partial equilibrium). `:wealth`/`:skill` ride as spectators. |
 | `SkillShock`          | `MarkovStage` (axis `:skill`)       | EMPLOYMENT-DEPENDENT dep closure `(; emp) -> emp == :unemp ? T_decay : T_grow`. `T_decay` drifts skill down one rung; `T_grow` drifts it up. |
 | `Receipt`             | `WealthChangeStage` (axis `:wealth`)| `b ↦ (1+r)b + (emp==:emp ? w·skill : b_u)`. Employed income scales with skill. |
 | `ConsumptionSavings`  | `ConsumptionSavingsStage` (axis `:wealth`) | Pick `b'`; `c = b_in − b'`; CRRA. |
@@ -48,12 +55,17 @@ Representative stationary steady state (default params, θ = 1):
 
 ```
 mass(Λ)                 = 1.000000
-employment rate         = 0.8327
-mean wealth             = 3.4064
-mean skill | employed   = 1.3119
-mean skill | unemployed = 1.1687   (LOWER ⇒ decay mechanism)
-mean unemployed effort  = 1.1493
+employment rate         = 0.9739
+mean wealth             = 0.9654
+mean skill | employed   = 1.3930
+mean skill | unemployed = 1.3078   (LOWER ⇒ decay mechanism)
+mean p* | unemployed    = 0.6877
+implied effort | unemp  = 2.6317
 ```
+
+Employment sits high and precautionary wealth low because separated workers search
+within the period: an unemployment spell requires both a separation and a failed
+search, so the pool that suffers skill decay is small and short-lived.
 
 Mean skill among the unemployed sits below that among the employed — the depreciation
 mechanism, read straight off the stationary distribution.

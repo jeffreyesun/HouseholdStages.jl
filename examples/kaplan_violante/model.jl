@@ -93,7 +93,7 @@ function kv_household(p = KVParams())
     shock   = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(block; axis = :liquid,                               # liquid cash = (1+r_b)b + w·y
         wealth_post = (; liquid, income) -> (1 + p.r_b) * liquid + p.w * income)
-    choose  = ArgmaxStage(full; axis = :illiquid_choice, reward = zeros(n_choice, 1))
+    choose  = ArgmaxStage(block, full; axis = :illiquid_choice, reward = zeros(n_choice, 1))
     debit   = WealthChangeStage(full; axis = :liquid,                                # b ↦ max(b − d − κ_f, ε)
         wealth_post = (; illiquid_choice, illiquid, liquid) ->
             max(liquid - deposit(illiquid_choice, illiquid) - fixedcost(illiquid_choice), p.ε))
@@ -101,7 +101,7 @@ function kv_household(p = KVParams())
         wealth_post = (; illiquid_choice, illiquid) -> a_next(illiquid_choice, illiquid))
     forget  = ForgetfulSumStage(full; axis = :illiquid_choice)
     savings = ConsumptionSavingsStage(block; β = p.β, axis = :liquid,                # consume from post-deposit liquid
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = shock ∘ receipt ∘ choose ∘ debit ∘ credit ∘ forget ∘ savings
     return define_moments!(hh;

@@ -7,19 +7,32 @@
 # spell of unemployment (a low-skill worker who loses their job sees their re-employment
 # wage fall as their skill erodes), which sharpens search incentives — the Ljungqvist–
 # Sargent (1998 JPE) / Pissarides (1992 QJE) "loss of skill during unemployment"
-# mechanism. The whole point of this Part-3 example: the within-period problem is FOUR
+# mechanism. The whole point of this Part-3 example: the within-period problem is FIVE
 # existing library stages, in time order, with NO bespoke household stage —
 #
-#     Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings
+#     Separation ∘ Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings
 #
 # (`∘` runs the LEFT stage first.)
 #
-# `Matching`  — `SearchMatchingStage` on the two-level `:emp` axis (1 = unemployed,
-#               2 = employed). The unemployed choose search effort `e`; effort costs
-#               `cost(e)` utils and finds a job with probability `job_finding(e, θ)`;
-#               the employed separate at rate `δ`. Tightness `θ` is a fixed scalar
-#               (partial equilibrium). The `:wealth`/`:skill` axes ride along as
-#               spectators — the stage solves a per-`(wealth, skill)` effort policy.
+# `Separation ∘ Matching` — ONE library call: `SearchMatchingStage` (derived sugar)
+#               expands to `MarkovStage(separation) ∘ MixingStage(job-search
+#               lottery)`; chains flatten, so the two leaves are unchanged.
+#               `Separation` (on the two-level `:emp` axis, 1 = unemployed,
+#               2 = employed): the employed lose their job w.p. `δ` (transition
+#               `[1 0; δ 1−δ]`), BEFORE matching — a worker separated this period
+#               searches this same period, so job loss and the search response are
+#               not staggered across periods. `Matching`: the unemployed CHOOSE
+#               their job-finding probability `p ∈ [0, 1]` directly — the lottery
+#               over "search succeeds" (`[0 1; 0 1]`) and "search fails" (identity);
+#               the employed rows coincide, so the employed choice is degenerate
+#               (`p* = 0`, cost 0). The sugar single-homes the convex UTILS cost
+#               `c(p) = κ_s·((1−p)log(1−p) + p)` and its closed-form argmax
+#               `p*(y) = 1 − exp(−y/κ_s)`; the scale `κ_s = χ/(A_match·θ)` (with `θ`
+#               read from `env`, the sugar's default) is calibrated so
+#               `c′(p) = χ·e(p)` at the effort `e(p) = −log(1−p)/(A·θ)` the matching
+#               technology `p = 1 − exp(−A·e·θ)` requires — higher tightness ⇒
+#               cheaper search. The `:wealth`/`:skill` axes ride along as
+#               spectators — a per-`(wealth, skill)` policy.
 #
 # `SkillShock` — `MarkovStage` on the `:skill` axis whose ROW-stochastic transition is
 #               EMPLOYMENT-DEPENDENT via a dep closure `(; emp) -> emp == :unemp ?
@@ -47,7 +60,8 @@
 # search+savings embedding follows Krusell, Mukoyama & Şahin (2010 ReStud).
 #
 # Library stages used (NO bespoke household stage):
-#   SearchMatchingStage, MarkovStage, WealthChangeStage, ConsumptionSavingsStage.
+#   SearchMatchingStage (derived sugar = MarkovStage ∘ MixingStage), MarkovStage,
+#   WealthChangeStage, ConsumptionSavingsStage.
 
 using HouseholdStages
 
@@ -64,9 +78,9 @@ using HouseholdStages
     δ   :: Float64 = 0.10          # job-separation rate
     θ   :: Float64 = 1.0           # market tightness (fixed scalar, partial equilibrium)
 
-    # Search effort + matching primitives.
-    efforts :: Vector{Float64} = collect(range(0.0, 3.0; length = 10))
-    χ       :: Float64 = 0.5       # effort-cost scale: cost(e) = χ·e²/2
+    # Search-cost + matching primitives: κ_s(θ) = χ/(A_match·θ) scales the
+    # probability-space search cost c(p) = κ_s·((1−p)log(1−p) + p).
+    χ       :: Float64 = 0.5       # search-cost scale (effort disutility χ·e²/2)
     A_match :: Float64 = 0.5       # matching efficiency in p(e, θ) = 1 − exp(−A·e·θ)
 
     # Skill ladder: a small grid of human-capital levels (wage multipliers).
@@ -86,21 +100,6 @@ const skill_dep_params = SkillDepParams()
 
 
 # Utility: CRRA felicity `u_crra` is provided by HouseholdStages.
-
-
-# Search-effort primitives (plain functions) #
-#--------------------------------------------#
-
-"""
-Search-effort utility cost `cost(e) = χ·e²/2` (a convex disutility, McCall-style).
-"""
-effort_cost(e, p = skill_dep_params) = 0.5 * p.χ * e^2
-
-"""
-Job-finding probability `p(e, θ) = 1 − exp(−A·e·θ)`, increasing in own effort `e`
-and in market tightness `θ`, bounded in `[0, 1)`.
-"""
-job_finding(e, θ, p = skill_dep_params) = 1 - exp(-p.A_match * e * θ)
 
 
 # Skill-transition kernels (plain economic helpers — row-stochastic on the skill grid) #
@@ -138,17 +137,20 @@ function skill_drift_kernel(n::Integer, p::Real; direction::Symbol)
 end
 
 
-# Household chain assembly — FOUR library stages, NO bespoke stage #
-#-----------------------------------------------------------------#
+# Household chain assembly — existing library stages only, NO bespoke stage #
+#---------------------------------------------------------------------------#
 
 """
 Build the skill-depreciation household block
-`Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings`, with employment rate, mean
-wealth, and (employment-conditional) skill-sum moments attached. The `:emp` axis is
-`[:unemp, :emp]` (level 1 = unemployed, 2 = employed). The `SkillShock` `MarkovStage`'s
-transition is the EMPLOYMENT-DEPENDENT dep closure `(; emp) -> emp == :unemp ? T_decay :
-T_grow`; tightness `θ` is read from `env`. No bespoke household stage — the skill kernels
-are economic data fed to `MarkovStage`.
+`Separation ∘ Matching ∘ SkillShock ∘ Receipt ∘ ConsumptionSavings`, with employment
+rate, mean wealth, and (employment-conditional) skill-sum moments attached. The `:emp`
+axis is `[:unemp, :emp]` (level 1 = unemployed, 2 = employed). Separation + job search
+is the `SearchMatchingStage` sugar — the separation `MarkovStage` composed with the
+`MixingStage` lottery over the "success"/"fail" `:emp` kernels at convex
+probability-space cost (tightness `θ` read from `env`, the sugar's default); the
+`SkillShock` `MarkovStage`'s transition is the EMPLOYMENT-DEPENDENT dep closure
+`(; emp) -> emp == :unemp ? T_decay : T_grow`. No bespoke household stage — the skill
+kernels are economic data fed to existing stages.
 """
 function skill_dep_household(p = skill_dep_params)
     n_skill = length(p.skill_grid)
@@ -158,11 +160,10 @@ function skill_dep_household(p = skill_dep_params)
         :emp    => Discrete([:unemp, :emp]),       # 1 = unemployed, 2 = employed
     )
 
-    matching = SearchMatchingStage(layout;         # defaults: (; axis = :emp, tightness = FromEnv(:θ))
-        efforts     = p.efforts,
-        cost        = e -> effort_cost(e, p),
-        job_finding = (e, θ) -> job_finding(e, θ, p),
-        separation  = p.δ,
+    search_and_match = SearchMatchingStage(layout;  # Separation ∘ Matching (derived sugar):
+        separation          = p.δ,                  #   the separated search this same period;
+        effort_cost_scale   = p.χ,                  #   tightness defaults to reading env.θ
+        matching_efficiency = p.A_match,
     )
 
     T_decay = skill_drift_kernel(n_skill, p.p_decay; direction = :down)
@@ -175,12 +176,12 @@ function skill_dep_household(p = skill_dep_params)
                                      (emp == :emp ? env.w * skill : env.b_u),
     )
 
-    savings = ConsumptionSavingsStage(layout;      # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;      # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
-    hh = matching ∘ skill_shock ∘ receipt ∘ savings
+    hh = search_and_match ∘ skill_shock ∘ receipt ∘ savings   # chains flatten: 5 leaves
     return define_moments!(hh;
         employment      = at_end(integrand = (; emp) -> emp == :emp ? 1.0 : 0.0,           reduce = sum),
         unemployment    = at_end(integrand = (; emp) -> emp == :unemp ? 1.0 : 0.0,         reduce = sum),

@@ -38,8 +38,8 @@
 #              KEEPING the price (p' = p, the diagonal) is free; RESETTING to any other grid price pays the
 #              fixed MENU COST `F`. The continuation value `β·V` (single-peaked in p', inherited from the
 #              profit) supplies the benefit of moving; `F` is the only friction here. The band is the set of
-#              (p, z) where resetting does not beat keeping. `search = :brute` (default): the fixed cost makes
-#              the reward NON-supermodular, so the monotone solve does not apply. A plain (after, before)
+#              (p, z) where resetting does not beat keeping. Brute argmax: the fixed cost makes the reward
+#              NON-supermodular (a monotone walk would mis-solve). A plain (after, before)
 #              `Matrix` IS the normal ArgmaxStage reward parameterization.
 # `Discount` — TimeDiscountingStage, β = 1/(1+r), supplying β·V_end before the argmax.
 #
@@ -168,9 +168,10 @@ function menu_cost_firm(p = menu_cost_params)
 
     # (S,s) reset reward on the price pair, M[p'(after), p(before)]: KEEPING the price (p' = p, the
     # diagonal) is free; RESETTING to any other grid price pays the fixed MENU COST F. A plain (after,
-    # before) Matrix IS the normal ArgmaxStage reward parameterization; non-supermodular ⇒ :brute.
+    # before) Matrix IS the normal ArgmaxStage reward parameterization; non-supermodular, so the
+    # brute ArgmaxStage (not ContinuousArgmaxStage) is the right primitive.
     M = [jp == ip ? 0.0 : -p.F for jp in 1:p.N_p, ip in 1:p.N_p]      # M[after, before]
-    reset = ArgmaxStage(layout; reward = M, axis = :price, search = :brute) ∘
+    reset = ArgmaxStage(layout; reward = M, axis = :price) ∘
             TimeDiscountingStage(layout; β = 1 / (1 + p.r))
 
     firm = shock ∘ erosion ∘ profit ∘ reset

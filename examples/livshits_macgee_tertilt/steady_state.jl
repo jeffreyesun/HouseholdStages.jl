@@ -54,8 +54,8 @@ function lmt_solve(p = lmt_params; verbosity = 1)
     hh      = lmt_household(p)
     product = hh.buffer.stages[1]
     comp    = product.buffer.components
-    out_layout = product.buffer.output_layout
-    in_layout  = input_layout(comp[1])
+    out_layout = end_layout(product)
+    in_layout  = start_layout(comp[1])
     na, nε, ns = layout_size(in_layout)[1], length(p.ε_grid), 2
     N = p.N
 

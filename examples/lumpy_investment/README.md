@@ -41,8 +41,8 @@ Two load-bearing decompositions:
   keeping the level (the diagonal) is free, jumping to any other level pays `F`. A plain
   `Matrix` is the normal `ArgmaxStage` reward parameterization (the same role
   `to_matrix_source` plays for `ConsumptionSavingsStage`/`BuyHomeStage`). The fixed cost
-  makes the reward non-supermodular, so the stage uses `search = :brute` (not the
-  monotone solve). The capital axis is **discrete** so "keep" (`k' = k`) is an exact
+  makes the reward non-supermodular (a monotone solve would not apply; the argmax is
+  brute). The capital axis is **discrete** so "keep" (`k' = k`) is an exact
   grid point.
 
 ## What is the outer loop (the caller's, never the block)

@@ -6,15 +6,12 @@
 # GPU result matches the CPU reference; FAIL records the error class;
 # NEEDS-KERNEL flags stages known to require a hand-written GPU kernel.
 #
-# CPU→GPU path. We move a *constructed* stage onto the GPU through the
-# production `to_device(stage, move_fn)` (src/lifts/gpu.jl), passing a
-# Float64-preserving mover so the ≈ comparison against the CPU reference is
-# clean rather than degraded to Float32. `to_device` moves the buffer's
-# isbits-eltype arrays (kernel/scratch/V_start/Λ_end) and the Spec's array
-# fields (transition, cost_matrix, …) to the device, reconstructing the
-# kernel/scratch structs and re-inferring the Spec's type params. Non-isbits
-# arrays (a Symbol-celled cell_array) stay host-side. Inputs (V_end / Λ_start)
-# are passed as device arrays.
+# CPU→GPU path. We relocate a *constructed* stage onto the GPU through the
+# production `to_device(stage, CuArray)` (src/lifts/gpu.jl), which carries the
+# spec and layout unchanged and rebuilds the kernel, scratch and cache with
+# their isbits-eltype arrays on the device. Non-isbits arrays (a Symbol-celled
+# cell_array) and closure captures stay host-side. Inputs (V_end / Λ_start) are
+# passed as device arrays.
 
 using HouseholdStages
 using CUDA
@@ -26,30 +23,24 @@ const HS = HouseholdStages
 CUDA.allowscalar(false)
 
 # ---------------------------------------------------------------------
-# CPU→GPU move — the production `to_device(stage, move_fn)` from
+# CPU→GPU relocation — the production `to_device(stage, to)` from
 # `src/lifts/gpu.jl`. CUDA is not a dependency of the package, so the
-# package takes the device mover as an argument; the GPU test env
-# supplies it here. We pass a *Float64-preserving* mover (rather than
-# `CUDA.cu`, which defaults to Float32) so the GPU result compares
-# cleanly against the Float64 CPU reference instead of degrading to
-# single precision. `to_device` itself:
-#   - moves isbits-eltype arrays to the device, leaving non-isbits
-#     arrays (e.g. a Symbol-celled `cell_array`) host-side;
-#   - reconstructs kernel/scratch structs (so their array fields must
+# adaptor is caller-supplied; the GPU test env passes `CuArray`, which
+# is non-demoting, so the device result compares cleanly against the
+# Float64 CPU reference. `to_device` itself:
+#   - relocates isbits-eltype arrays, leaving non-isbits arrays (e.g. a
+#     Symbol-celled `cell_array`) and closure captures host-side;
+#   - rebuilds the kernel, scratch and cache (so their array fields must
 #     be declared on an `<:AbstractArray` type parameter);
-#   - moves the Spec's array fields and re-infers its type params;
-#   - installs a GPU-safe `_seat_cache!` fingerprint (no host `hash`
-#     shim is needed any more — `abstract.jl` dispatches the
-#     fingerprint on the array type).
+#   - carries the spec and the layout unchanged.
 # ---------------------------------------------------------------------
 
-# Float64-preserving device mover for isbits arrays; pass everything else
-# through (`to_device` already guards on isbits-ness, but keep the eltype
-# explicit here so a stray non-`Array` AbstractArray still lands as Float64).
+# Float64-preserving device mover for the survey's `V_end` / `Λ_start` inputs;
+# pass everything else through.
 to_dev(x::AbstractArray) = CuArray(collect(x))
 to_dev(x)               = x
 
-gpu_stage(stage::AbstractStage) = to_device(stage, to_dev)
+gpu_stage(stage::AbstractStage) = to_device(stage, CuArray)
 
 # ---------------------------------------------------------------------
 # Result recording
@@ -234,10 +225,10 @@ function run_survey()
     end
 
     # --- ArgmaxStage ---
-    # GPU-complete (both legs). backward! is the discrete `(max, +)` `:brute` argmax over an
-    # unordered axis — now a device kernel (`_brute_argmax_kernel!` in the ext): one thread per
+    # GPU-complete (both legs). backward! is the discrete `(max, +)` brute argmax over an
+    # unordered axis — a device path through the stratified driver: one thread per
     # stratum column, scalar `>` first-index tie-break, bit-identical to the CPU brute walk.
-    # forward! is the integer-policy scatter, which reuses the CS `_cs_forward_scatter!` device
+    # forward! is the integer-policy scatter, which reuses the `NearestScatterOp` fiber-op device
     # kernel (distinct origins → one destination, one thread owns each column ⇒ no atomics).
     survey_stage("ArgmaxStage")() do
         layout = GriddedLayout(:s => Discrete([:A, :B]))
@@ -293,7 +284,7 @@ function run_survey()
             :taste => Discrete([:a, :b, :c, :d, :e]),
         )
         stage = ForgetfulSumStage(layout; axis = :taste)
-        V_end = randn(4, 3, 1)         # output layout: :taste resized to size 1
+        V_end = randn(4, 3, 1)         # end layout: :taste resized to size 1
         Λ = rand(4, 3, 5); Λ ./= sum(Λ)
         (stage, V_end, Λ, nothing)
     end
@@ -411,21 +402,23 @@ function write_markdown(path, gpu_name)
                     "a `[weakdeps]` CUDA). CUDA stays out of the main ",
                     "`Project.toml`; the extension only loads when CUDA is ",
                     "present, and defines `CuArray`-typed methods at the ",
-                    "`src` dispatch seams (`_cs_backward_columns!`, ",
-                    "`_cs_forward_scatter!`, `_along_axis`, ",
-                    "`_fill_utility_table!`), leaving every CPU path unchanged. ",
-                    "The kernels are faithful ports of the GPU-tested reference ",
-                    "kernels in `reference_materials/example_stages` ",
-                    "(`k1_argmax_kernel!`, `reinterpolate_GPU_kernel!`, ",
+                    "`src` dispatch seam (`_stratified!`), leaving every ",
+                    "CPU path unchanged. ",
+                    "The WealthChange kernels are faithful ports of the ",
+                    "GPU-tested reference kernels in ",
+                    "`reference_materials/example_stages` ",
+                    "(`reinterpolate_GPU_kernel!`, ",
                     "`convert_distribution_kernel!`, `get_λ_postc_kernel!`), ",
                     "adapted from the reference's wealth-axis-leading layout to ",
                     "this package's layout-generic arrays by permuting the ",
                     "wealth axis to the front before the kernel and back after. ",
-                    "CS backward uses the iterative divide-and-conquer reference ",
-                    "kernel when `ispow2(n_w-1)` and a sequential monotone-walk ",
-                    "kernel otherwise; both match the CPU result to machine ",
-                    "precision (verified in `test/gpu/test_kernels.jl`, including ",
-                    "non-leading wealth-axis layouts). The one remaining ",
+                    "CS backward runs the continuous-argmax kernel ",
+                    "(the shared divide-and-conquer ",
+                    "node walk + parabolic vertex, one thread per column); the ",
+                    "discrete ArgmaxStage backward runs the brute kernel ",
+                    "through the same driver; both match the CPU result to ",
+                    "machine precision (verified in `test/gpu/test_kernels.jl`, ",
+                    "including non-leading wealth-axis layouts). The one remaining ",
                     "open item is the CS GPU backward's restriction to ",
                     "consumption-only utilities (the `U` table singleton outside ",
                     "choice×wealth); a state-dependent flow utility falls back to ",
@@ -435,49 +428,36 @@ function write_markdown(path, gpu_name)
                     "reward face is assembled host-side (cells may be ",
                     "`Symbol`-valued, which no device broadcast can evaluate) and ",
                     "copied into a device-resident `U` buffer. `backward!` — the ",
-                    "discrete `(max, +)` `:brute` argmax over an unordered axis — ",
-                    "runs the ext's `_brute_argmax_kernel!` (one thread per stratum ",
+                    "discrete `(max, +)` brute argmax over an unordered axis — ",
+                    "runs the same walk on device (one thread per stratum ",
                     "column, scalar `>` first-index tie-break, bit-identical to the ",
                     "CPU brute walk including ties; verified value AND policy index ",
                     "in `test/gpu/test_kernels.jl`). `forward!` — the integer-policy ",
                     "scatter (distinct origins → one destination) — reuses the CS ",
-                    "`_cs_forward_scatter!` device kernel (one thread owns each ",
+                    "`NearestScatterOp` fiber op (one thread owns each ",
                     "column, so the colliding `+=` needs no atomics).")
         println(io)
         println(io, "## CPU→GPU path used by the survey")
         println(io)
         println(io, """
-        The survey moves a *constructed* stage onto the GPU through the
-        production `to_device(stage, move_fn)` (`src/lifts/gpu.jl`). CUDA is
-        not a dependency of the package, so the device mover is supplied by
-        this GPU test env; the survey passes a Float64-preserving mover (not
-        `CUDA.cu`, which would default to Float32) so the device result
-        compares cleanly against the Float64 CPU reference. `to_device`:
+        The survey relocates a *constructed* stage onto the GPU through the
+        production `to_device(stage, to)` (`src/lifts/gpu.jl`). CUDA is not a
+        dependency of the package, so the `Adapt` adaptor is supplied by this
+        GPU test env; the survey passes `CuArray`, which is non-demoting, so
+        the device result compares cleanly against the Float64 CPU reference.
+        `to_device`:
 
-        1. **Buffer.** Rebuilds the `StageBuffer`, moving every isbits-eltype
-           array (`V_start`, `Λ_end`, and each array in the `kernel`/`scratch`
-           structs) to the device. **Non-isbits arrays are left host-side** —
-           a `Symbol`-celled `cell_array` cannot be broadcast over on-device,
+        1. **Kernel / scratch / cache.** Rebuilds all three, relocating every
+           isbits-eltype array (`V_start`, `Λ_end`, the kernel's own fields,
+           the materialised payoff faces). **Non-isbits arrays stay host-side**
+           — a `Symbol`-celled `cell_array` cannot be broadcast over on-device,
            so the owning stage (ArgmaxStage) assembles its payoff host-side
-           and copies only the numeric result to the device.
-        2. **Spec.** Reconstructs the Spec with its array fields (`transition`,
-           `cost_matrix`, `infeasible` mask, …) moved to the device
-           — Markov/Logit `mul!` their Spec arrays against device data.
+           and copies only the numeric result across.
+        2. **Spec and layout.** Carried unchanged: both are host-side
+           configuration read at construction and by the host-side fills, and
+           a spec's closures are evaluated on the host with their fibers staged
+           across by `fill_field!`.
         3. **Inputs.** `V_end` / `Λ_start` are passed as device arrays.
-
-        The two former harness shims are now closed in `src`:
-
-        - **`_seat_cache!` fingerprint** — `abstract.jl` no longer calls the
-          element-iterating `hash` on a device `V_end`. `_v_fingerprint`
-          dispatches on the array type: a host `Array` keeps the full content
-          `hash` (what the cache tests assert and what catches in-place
-          mutation); any other array fingerprints cheap on-device reductions
-          (`size`, `length`, `sum`, `sum-of-squares`). No `hash(::CuArray)`
-          shim is needed.
-        - **Concrete-typed kernel structs** — `LogitChoiceKernel` now declares
-          its array fields on `<:AbstractMatrix`/`<:AbstractVector` type
-          parameters (mirroring `WealthChangeKernel`/`ArgmaxKernel`), so the
-          buffer move accepts device arrays.
         """)
     end
     return path

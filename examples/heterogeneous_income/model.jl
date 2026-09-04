@@ -88,7 +88,7 @@ function hip_household(p = hip_params)
             (1 + env.r) * wealth + env.w * income_type * income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock ∘ receipt ∘ savings

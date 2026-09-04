@@ -131,7 +131,7 @@ function mccall_household(p = mccall_params)
     F_K = offer_kernel(F)        # unemployed: redraw an offer from F
     I_K = identity_kernel(n)     # employed: keep the wage
 
-    accept_reject = ArgmaxStage(layout; axis = :emp, reward = accept_reward, search = :brute)
+    accept_reject = ArgmaxStage(layout; axis = :emp, reward = accept_reward)
     flow_utility  = UtilityStage(layout;
         utility = (; emp, wage, env) -> emp == :emp ? u_crra(wage, Val(p.σ)) :
                                                       u_crra(env.b_u, Val(p.σ)))

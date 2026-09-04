@@ -225,7 +225,7 @@ function arellano_household(p = arellano_params)
     # Savings: the destination-AND-income-priced argmax. The reward closure declares its deps
     # (`income`, `status`) and `env` as kwargs and returns the `(after, before)` face for each
     # stratum; `env.q` is the `(N_a, N_y)` price schedule over `(a', current income)`.
-    savings = ArgmaxStage(layout; axis = :wealth, search = :brute,
+    savings = ArgmaxStage(layout; axis = :wealth,
         reward = (; income, status, env) -> begin
             iy   = findfirst(==(income), y_grid)
             qcol = view(env.q, :, iy)

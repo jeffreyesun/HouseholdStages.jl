@@ -1,7 +1,4 @@
-"""
-Deterministic wealth-change stage: each cell's wealth moves to the dep closure
-`wealth_post(; ax…[, env])` on the wealth `axis` grid (off-grid targets clamp to the grid
-endpoints). A domain wrapper over the axis-neutral [`DeterministicContinuousStage`](@ref).
-"""
-WealthChangeStage(layout::GriddedLayout; wealth_post, axis::Symbol=:wealth) =
-    DeterministicContinuousStage(layout; destination=wealth_post, axis=axis)
+"""each cell's wealth moves to `wealth_post`, a closure of the layout axes it names as keyword arguments, plus `env`."""
+WealthChangeStage(start_layout::GriddedLayout, end_layout::GriddedLayout = start_layout;
+                  wealth_post, axis::Symbol=:wealth) =
+    DeterministicContinuousStage(start_layout, end_layout; destination=wealth_post, axis=axis)

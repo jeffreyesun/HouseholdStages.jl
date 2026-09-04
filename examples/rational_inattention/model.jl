@@ -14,11 +14,12 @@
 # `Receipt`            — `WealthChangeStage` `b ↦ (1+r) b + w·y`.
 # `ConsumptionSavings` — `ConsumptionSavingsStage` picks next-period
 #                        wealth `b'` on the wealth grid; `c = b_in − b'`.
-# `Attention`          — `ScaleVarianceStage` picks the dispersion `θ` of a
-#                        mean-preserving spread `b' ↦ b' + θ·ξ` (ξ mean-zero)
-#                        at the information cost `c(θ) = λ·θ²` — a stand-in
-#                        for `λ·KL(θ)`. `θ = 0` is perfect attention (no
-#                        noise, no cost); larger `θ` is a noisier signal
+# `Attention`          — `MeanPreservingSpreadStage` picks the CONTINUOUS
+#                        dispersion `θ ∈ [0, θ_max]` of a Gaussian
+#                        mean-preserving spread of `b'` (sd θ, clamped to the
+#                        grid) at the information cost `c(θ) = λ·θ²` — a
+#                        stand-in for `λ·KL(θ)`. `θ = 0` is perfect attention
+#                        (no noise, no cost); larger `θ` is a noisier signal
 #                        about the state, paid for inversely through `λ`.
 #
 # Why θ* is interior (not the naive θ*=0). A pure mean-preserving spread on
@@ -26,9 +27,10 @@
 # cost). The bite here is the **borrowing constraint**: for poor, near-
 # constrained households the continuation value in wealth is locally
 # convex (the low draw is floored at the constraint, the high draw escapes
-# it), so a small dispersion carries option value. `ScaleVarianceStage`
-# streams the candidate θ and seats the per-cell optimum θ*(x); the
-# quadratic information cost λ·θ² disciplines it. The result is a sensible
+# it), so a small dispersion carries option value. `MeanPreservingSpreadStage`
+# solves the continuous θ per cell (scan + Newton on the smooth Gaussian
+# objective) and seats the optimum θ*(x); the quadratic information cost
+# λ·θ² disciplines it. The result is a sensible
 # attention gradient — θ* high for the constrained poor, → 0 for the
 # wealthy — and θ* falls everywhere as λ rises (the RI comparative static).
 #
@@ -56,9 +58,7 @@ using HouseholdStages
     P_y    :: Matrix{Float64} = [0.7 0.2 0.1;
                                  0.2 0.6 0.2;
                                  0.1 0.2 0.7]
-    dispersions :: Vector{Float64} = collect(0.0:0.25:1.0)   # θ grid (0 = perfect attention)
-    shocks      :: Vector{Float64} = [-1.0, 1.0]             # mean-zero signal-noise support ξ
-    weights     :: Vector{Float64} = [0.5, 0.5]
+    θ_max :: Float64   = 1.0                       # dispersion cap (θ = 0 is perfect attention)
     N_w   :: Int       = 80
     w_min :: Float64   = 0.0
     w_max :: Float64   = 8.0
@@ -77,8 +77,8 @@ const rational_inattention_params = RationalInattentionParams()
 """
 Build the variance-RI household block `IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Attention`,
 with `mean_wealth = ∫ wealth dΛ` attached. Four existing stages, no bespoke household stage: the
-`Attention` leaf is a `ScaleVarianceStage` choosing the dispersion θ of next-period wealth at the
-information cost `c(θ) = λ·θ²` (a stand-in for `λ·KL`).
+`Attention` leaf is a `MeanPreservingSpreadStage` choosing the continuous dispersion θ ∈ [0, θ_max]
+of next-period wealth at the information cost `c(θ) = λ·θ²` (a stand-in for `λ·KL`).
 """
 function rational_inattention_household(p = rational_inattention_params)
     layout = GriddedLayout(
@@ -88,11 +88,10 @@ function rational_inattention_household(p = rational_inattention_params)
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = IncomeStage(layout)               # (1+r)·wealth + w·income, the standard receipt
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
-    attention = ScaleVarianceStage(layout; axis = :wealth,
-        dispersions = p.dispersions, shocks = p.shocks, weights = p.weights,
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
+    attention = MeanPreservingSpreadStage(layout; axis = :wealth, θ_max = p.θ_max,
         cost = (θ; env) -> env.λ * θ^2)               # λ·θ² — stand-in for λ·KL(θ)
 
     hh = shock ∘ receipt ∘ savings ∘ attention

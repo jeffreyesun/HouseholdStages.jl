@@ -70,9 +70,9 @@ function spatial_household(p::SpatialParams)
         end,
     )
 
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     return define_moments!(shock ∘ migration ∘ receipt ∘ savings;
@@ -106,7 +106,7 @@ p    = SpatialParams()
 #--------------------------#
 
 hh   = spatial_household(p)
-dims = layout_size(input_layout(hh))
+dims = layout_size(start_layout(hh))
 
 @printf "Layout: wealth %d × income %d × location %d = %d cells\n" dims[1] dims[2] dims[3] prod(dims)
 

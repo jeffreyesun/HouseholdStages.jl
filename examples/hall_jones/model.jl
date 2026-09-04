@@ -130,7 +130,7 @@ function hall_jones_household(p = hall_jones_params)
 
     # Choose next health h' onto the auxiliary axis (reward 0; benefit via
     # continuation, cost via downstream debit).
-    choose = ArgmaxStage(full; axis = :hc, reward = zeros(p.N_h, 1))
+    choose = ArgmaxStage(block, full; axis = :hc, reward = zeros(p.N_h, 1))
 
     # Debit the medical cost from wealth — this couples health to the budget.
     debit = WealthChangeStage(full; axis = :wealth,
@@ -146,7 +146,7 @@ function hall_jones_household(p = hall_jones_params)
     # flow while alive (zero when dead, so dead cells carry zero value).
     consume = ConsumptionSavingsStage(block; β = p.β, axis = :wealth,
         utility_axes = (:alive,),
-        utility = (cell, c; env) -> cell.alive == 1 ? u_crra(c, Val(p.σ)) + p.vsl : 0.0)
+        utility = (cell, c) -> cell.alive == 1 ? u_crra(c, Val(p.σ)) + p.vsl : 0.0)
 
     # Survive on the CHOSEN health; dead absorbing.
     survival_T(h) = [hj_survival_prob(h, p)  1 - hj_survival_prob(h, p);

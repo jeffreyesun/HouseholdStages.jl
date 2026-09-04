@@ -127,7 +127,7 @@ function diagnostic_household(p = diagnostic_params; θ = p.θ)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock ∘ receipt ∘ savings

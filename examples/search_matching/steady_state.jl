@@ -24,8 +24,9 @@ using Printf
 
 """
 Solve the household block at a fixed tightness `θ` (partial equilibrium). One inner
-V/Λ fixed point via `solve_steady_state_given_env!`; returns moments and the
-implied job-finding rate at the median wealth cell's effort policy.
+V/Λ fixed point via `solve_steady_state_given_env!`; returns moments and the seated
+job-finding policy `p*(wealth)` on the unemployed slice, read from the `Matching`
+`MixingStage` leaf.
 """
 function search_matching_pe(p = search_matching_params; θ = 1.0, verbosity = 1)
     hh  = search_matching_household(p)
@@ -33,11 +34,14 @@ function search_matching_pe(p = search_matching_params; θ = 1.0, verbosity = 1)
     res = solve_steady_state_given_env!(hh, env)
     m   = res.moments
 
-    verbosity > 0 && @printf("  PE  θ = %.3f → employment = %.4f, K = %.4f (VFI %d, Λ %d)\n",
-                             θ, m.employment, m.K_supplied,
+    p_find = HouseholdStages.policy(hh.buffer.stages[2])[:, 1]   # Matching leaf, unemployed slice
+    p_find_mean = sum(p_find) / length(p_find)
+
+    verbosity > 0 && @printf("  PE  θ = %.3f → employment = %.4f, K = %.4f, mean p* = %.4f (VFI %d, Λ %d)\n",
+                             θ, m.employment, m.K_supplied, p_find_mean,
                              res.history.vfi_iters, res.history.lambda_iters)
 
-    return (; θ, employment = m.employment, K = m.K_supplied,
+    return (; θ, employment = m.employment, K = m.K_supplied, p_find, p_find_mean,
               V = res.V, Λ = res.Λ, q = vacancy_fill(θ, p))
 end
 

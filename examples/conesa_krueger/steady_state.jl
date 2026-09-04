@@ -92,8 +92,8 @@ function conesa_krueger_solve(p = conesa_krueger_params; balance = true, b0 = 0.
     hh      = conesa_krueger_household(p)
     product = hh.buffer.stages[1]
     comp    = product.buffer.components
-    out_layout = product.buffer.output_layout
-    nw, nε, N  = layout_size(input_layout(comp[1]))[1], length(p.ε_grid), p.N
+    out_layout = end_layout(product)
+    nw, nε, N  = layout_size(start_layout(comp[1]))[1], length(p.ε_grid), p.N
     R = N - p.retire_age                          # number of retired cohorts (unit mass each)
 
     b   = b0

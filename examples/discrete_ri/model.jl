@@ -149,7 +149,7 @@ function discrete_ri_household(p = discrete_ri_params)
     # occupation-indexed matrices handed to an existing MarkovStage — data.
     income_draw = MarkovStage(layout;
         axis = :income,
-        transition_matrix = (; occupation, env) -> p.P_by_occ[occ_index[occupation]])
+        transition_matrix = (; occupation) -> p.P_by_occ[occ_index[occupation]])
 
     hh = choice ∘ discount ∘ income_draw
     return define_moments!(hh;
@@ -165,18 +165,10 @@ end
 #------------------------------------------------------------#
 
 """
-Recover the per-state occupation choice probabilities `P(a′ | income, a)` from
-the seated logit kernel after a solve. The household chain flattens
-`LogitUtilityStage ∘ Discount ∘ IncomeDraw` to leaf stages
-`[LogitChoice, Utility, Discount, Markov]`, so the logit is `stages[1]`; its
-Gibbs operator gives `π(a′ | i, s) = eψC[i, a′]·value_weight[a′, s]/normalizer[i, s]`
-(here the off-occupation state `s` indexes income). Returns an
+The per-state occupation choice probabilities `P(a′ | income, a)` after a solve. The household
+chain flattens `LogitUtilityStage ∘ Discount ∘ IncomeDraw` to leaf stages
+`[LogitChoice, Utility, Discount, Markov]`, so the logit is `stages[1]`; its seated policy is the
+`(income, occupation)` layout with the destination occupation appended, i.e. an
 `(income, origin-occ, dest-occ)` array.
 """
-function ri_choice_probs(hh)
-    k = hh.buffer.stages[1].kernel
-    n_inc, n_occ = size(k.value_weight)        # value_weight is (income, occupation)-shaped
-    eC = reshape(parent(k.eψC), n_occ, n_occ)  # eψC[origin-occ, dest-occ]
-    return [eC[i, j] * k.value_weight[s, j] / k.normalizer[s, i]
-            for s in 1:n_inc, i in 1:n_occ, j in 1:n_occ]
-end
+ri_choice_probs(hh) = choice_probabilities(hh.buffer.stages[1])

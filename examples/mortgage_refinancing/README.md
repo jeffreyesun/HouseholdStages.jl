@@ -21,7 +21,7 @@ IncomeShock ∘ HousePriceShock ∘ Receipt ∘ [ ChooseM' ∘ LTVGate ∘ Pay �
 | `IncomeShock` | `MarkovStage` (`:income`) | 2-state labour-income Markov. |
 | `HousePriceShock` | `MarkovStage` (`:hp`) | Boom/bust house value. Shifts the LTV gate: in a bust, high balances are underwater and locked out of refinancing. |
 | `Receipt` | `WealthChangeStage` (`:wealth`) | Cash on hand `a ↦ (1+r_a)·a + w·y`. |
-| `ChooseM'` | `ArgmaxStage` (`:refi_choice`) | Picks the new balance `m'` onto a separate auxiliary axis (reward `0`; `:brute`, lumpy/non-monotone). Grows the singleton axis `1 → K`. |
+| `ChooseM'` | `ArgmaxStage` (`:refi_choice`) | Picks the new balance `m'` onto a separate auxiliary axis (reward `0`; the brute per-column `findmax`, right for the lumpy/non-monotone policy). Grows the singleton axis `1 → K`. |
 | `LTVGate` | `BorrowingConstraintStage` | A cash-out (`m' > m`) is infeasible (`-Inf`) when `m'/hp > θ_ltv`. Keep and prepay are never gated, so the brute argmax always has a feasible action. |
 | `Pay` | `WealthChangeStage` (`:wealth`) | `a ↦ max(a + (m'−m) − κ·1{m'≠m} − r_m·m', ε)`: principal change (cash-out +, prepay −), fixed cost, and interest on the new balance. Reads **both** `:refi_choice` (m') and `:mortgage` (old m). |
 | `SetMortgage` | `WealthChangeStage` (`:mortgage`) | Commits the choice `m ↦ m'`. |
@@ -36,7 +36,7 @@ entering the choice (`steady_state.jl`).
 
 ## Why the auxiliary-choice axis (and not the default/buy-home pattern)
 
-The recommended starting point was the simpler `DefaultStage`/`BuyHomeStage`
+The natural first reach is the simpler `DefaultStage`/`BuyHomeStage`
 pattern: a gated choice on `:mortgage` followed by a `WealthChangeStage` reading
 `cell.mortgage`. That pattern **cannot** express this model, for the same reason
 `durable_housing` cannot charge a one-time stock price: a following stage sees

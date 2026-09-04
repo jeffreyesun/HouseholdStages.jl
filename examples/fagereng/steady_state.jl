@@ -27,7 +27,7 @@ wealth conditional on each return type. `Λ` has dims `(wealth, income, rtype)`
 in layout order.
 """
 function wealth_distribution(hh, Λ)
-    cells  = cell_array(output_layout(hh))                 # (N_w, N_income, N_rtype)
+    cells  = cell_array(end_layout(hh))                 # (N_w, N_income, N_rtype)
     w_vals = getfield.(cells, :wealth)
 
     mass   = sum(Λ)

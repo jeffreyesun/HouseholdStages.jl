@@ -1,43 +1,27 @@
-# Dense kernel — the `mul` operator over a MatrixField #
-#=====================================================#
-# `DenseKernel` owns a `MatrixField` (its compact `(n_out, n_in, dep…)` data + operative-axis/dep
-# metadata, fields/matrix_field.jl) and is the `mul` operator: `forward! = K·`, `backward! = Kᵀ·`.
-# Generically it routes through the field driver `stratified_apply!` (covariant / contravariant `mul`).
-# For a contiguous-compact backing it takes a batched-multiply fast path — one `batched_mul!` (CUBLAS
-# on device) over the dep batch, operative axis gathered first. This is the one sanctioned
-# backing-specific site (end-goal §8.1, §15.3): assumed of the kernel, never of the `MatrixField`.
-# The gather perm + work-buffers (the contraction plan) are derived from the field metadata in
-# `kernel_scratch`. Rectangular n_out ≠ n_in is first-class: square = transition, a row (n_out = 1)
-# forgets, a column (n_in = 1) introduces.
+# Dense kernel — a MatrixField applied as a matrix multiply #
+#===========================================================#
+# `DenseKernel` owns a `MatrixField` and applies it: `forward! = K·`, `backward! = Kᵀ·`. A contiguous
+# backing takes the batched-multiply fast path; any other backing routes through `stratified_apply!`.
+# `n_out ≠ n_in` is allowed: a row (`n_out = 1`) forgets the axis, a column (`n_in = 1`) introduces it.
 
 using LinearAlgebra: transpose, mul!
 using NNlib: batched_mul!, batched_transpose
 
-"""
-The `mul` kernel: owns a `MatrixField` and applies it as a stratified matrix multiply,
-`forward! = K·` (covariant) and `backward! = Kᵀ·` (contravariant).
-"""
+"A `MatrixField` applied as a stratified matrix multiply: `forward! = K·`, `backward! = Kᵀ·`."
 struct DenseKernel{F}
-    field :: F        # a MatrixField (fields/matrix_field.jl)
+    field :: F        # a MatrixField
 end
 
 "The compact backing array of a `DenseKernel`'s owned `MatrixField`."
 Base.parent(k::DenseKernel) = k.field.array
 
-# Source-driven front door + fill. Lives here, not in the field layer, so the dependency runs
-# fields → kernels (`fields/` never references `DenseKernel`).
+"Build a `MatrixField` from `source` and wrap it as an operator."
+dense_kernel(::Type{T}, start_layout::GriddedLayout, end_layout::GriddedLayout, axis::Symbol, source) where {T} =
+    DenseKernel(matrix_field(T, start_layout, end_layout, axis, source))
 
-"""
-Source-driven front door: build a `MatrixField` (fields/matrix_field.jl) and wrap it in a
-`DenseKernel`. A stage that only *reads* the matrix (the argmax reward) calls `matrix_field` directly
-instead, never wrapping it as an operator.
-"""
-dense_kernel(::Type{T}, layout::GriddedLayout, axis::Symbol, source) where {T} =
-    DenseKernel(matrix_field(T, layout, axis, source))
-
-"Materialise a `DenseKernel`'s owned `MatrixField` from `source` (delegates to the field fill)."
-fill_field!(k::DenseKernel, source, layout::GriddedLayout, axis::Symbol, env) =
-    (fill_field!(k.field, source, layout, axis, env); k)
+"Materialise a `DenseKernel`'s owned `MatrixField` from `source`."
+fill_field!(k::DenseKernel, source, dep_layout::GriddedLayout, axis::Symbol, env) =
+    (fill_field!(k.field, source, dep_layout, axis, env); k)
 
 "The src-gather perm bringing `src`'s dims into `(axis, nondep…, dep…)` order, plus the nondep count."
 function _gather_perm(adim::Integer, deps::NTuple{D, Int}, ::Val{N}) where {D, N}
@@ -46,21 +30,14 @@ function _gather_perm(adim::Integer, deps::NTuple{D, Int}, ::Val{N}) where {D, N
     return ((a, nondep..., deps...), length(nondep))
 end
 
-# The in-place per-slice `mul` closure for the generic driver: `dest_slice = mat · src_slice`,
-# `mat` being the fiber or its transpose (the driver picks via `mode`).
+# The per-slice mul: `dest_slice = mat · src_slice`.
 _mul_slice!(dest, mat, src) = mul!(dest, mat, src)
 
-# A contiguous-compact backing (`Array` / `CuArray` / any `DenseArray`) reshapes to the
-# `(n_out, n_in, n_dep)` batch for free, so the batched-mul fast path applies; anything else
-# (a lazy / structured / non-contiguous backing) degrades to the generic stratified driver.
+# Whether the backing reshapes to the `(n_out, n_in, n_dep)` batch for free.
 _fast_dense(::DenseArray) = true
 _fast_dense(::AbstractArray) = false
 
-"""
-Dense apply: `dest = K·src` (`transpose = false`) or `Kᵀ·src` (`true`). Takes the batched-mul fast
-path (`_dense_contract!`) for a contiguous-compact field backing; otherwise the generic
-`stratified_apply!` driver (the reference semantics, any backing).
-"""
+"Dense apply: `dest = K·src`, or `Kᵀ·src` when `transpose`."
 function _dense_apply!(dest, k::DenseKernel, src, scratch, transpose::Bool)
     A = k.field.array
     if _fast_dense(A)
@@ -75,11 +52,8 @@ forward!(dest, k::DenseKernel, src; scratch)  = _dense_apply!(dest, k, src, scra
 backward!(dest, k::DenseKernel, src; scratch) = _dense_apply!(dest, k, src, scratch, true)
 
 """
-The batched-mul fast path: contract the compact fiber array `A` `(n_out, n_in, dep…)` along the
-operative axis of `src` into `dest`, varying over the deps. `A` reshapes to the `(n_out, n_in, n_dep)`
-batch for free (contiguous); `src` is gathered into `(axis, nondep…, dep…)` by the precomputed `perm`.
-The applied operator is `A` (forward) / `Aᵀ` (`transpose`, backward). A no-permute fast path skips the
-gather when `perm` is the identity (the operative axis is already first).
+Contract the compact fiber array `A` `(n_out, n_in, dep…)` — or `Aᵀ` under `transpose` — along the
+operative axis of `src` into `dest`. `perm` gathers `src` into `(axis, nondep…, dep…)` order.
 """
 function _dense_contract!(dest, src, A, perm, gathered_in, gathered_out, transpose::Bool)
     n_out = size(A, 1)
@@ -91,12 +65,10 @@ function _dense_contract!(dest, src, A, perm, gathered_in, gathered_out, transpo
     if perm == ntuple(identity, ndims(src))           # axis already first: reshape, no gather
         in_mat  = reshape(src,  n_src, n_other, n_dep)
         out_mat = reshape(dest, n_dst, n_other, n_dep)
-        _batched_matmul!(out_mat, A, in_mat, n_dep, transpose)   # one batched_mul! over the dep batch
+        _batched_matmul!(out_mat, A, in_mat, n_dep, transpose)
         return dest
     end
-    # General case: gather src into axis-first order, contract, scatter back. The identity
-    # fast path above is kept deliberately — routing it through here would add two full-array
-    # permute-copies (gather + scatter) on the common axis-first contraction.
+    # General case: gather src axis-first, contract, scatter back.
     src_g  = permutedims!(reshape(view(gathered_in, 1:length(src)),
                                   _gathered_shape(src, perm)), src, perm)
     in_mat = reshape(src_g, n_src, n_other, n_dep)
@@ -107,36 +79,34 @@ function _dense_contract!(dest, src, A, perm, gathered_in, gathered_out, transpo
     return dest
 end
 
-# kernel_scratch — the gather plan, derived from the kernel's field metadata #
-#---------------------------------------------------------------------------#
-# The operative-axis and dep positions are explicit on the owned `MatrixField`, so the gather
-# perm / work-buffers follow directly — no reverse-engineering from a permuted view.
+# kernel_scratch — the gather plan #
+#---------------------------------#
 
-"""
-The gather scratch (src-gather perm + two work-buffers) a `DenseKernel` contraction needs, derived
-from its owned field's metadata.
-"""
-function kernel_scratch(k::DenseKernel, layout::GriddedLayout, ::Type{T}) where {T}
-    f           = k.field
-    gperm, _    = _gather_perm(f.operative_dim, f.dep_dims, Val(length(layout)))
-    n_out, n_in = size(f.array, 1), size(f.array, 2)
-    # Both verbs reuse these buffers, so size them for the larger of input/output — a
-    # rectangular kernel (forget n_out<n_in, introduce/crosswalk n_out>n_in) resizes the
-    # contracted axis from n_in to n_out, scaling the total by n_out/n_in.
-    insz        = prod(layout_size(layout))
-    gsz         = max(insz, insz ÷ n_in * n_out)
+"The scratch a `DenseKernel` contraction needs: the src-gather perm and two work-buffers."
+function kernel_scratch(k::DenseKernel, start_layout::GriddedLayout, end_layout::GriddedLayout,
+                        ::Type{T}) where {T}
+    f        = k.field
+    gperm, _ = _gather_perm(f.operative_dim, f.dep_dims, Val(length(start_layout)))
+    gsz = max(prod(layout_size(start_layout)), prod(layout_size(end_layout)))
     return (gather_perm = gperm, gather_in = zeros(T, gsz), gather_out = zeros(T, gsz))
 end
 
 # Shared dense-contraction helpers #
 #----------------------------------#
 
-"""
-The shared per-dep-batch matmul: contract fiber batch `M` `(n_out, n_in, n_dep)`
-against `in_mat` into `out_mat`; `transpose` applies `Mᵀ`. One `batched_mul!`
-(CUBLAS on device) over the batch — a singleton dep is just a 1-batch call.
-"""
+"The leading `(rows, cols)` panel of an array whose remaining dims are singletons."
+_panel(X) = reshape(X, size(X, 1), size(X, 2))
+
+"Contract the single fiber `M` against `in_mat` into `out_mat`, applying `Mᵀ` under `transposed`."
+function _single_matmul!(out_mat, M, in_mat, transposed::Bool)
+    Mmat = _panel(M)
+    mul!(_panel(out_mat), transposed ? transpose(Mmat) : Mmat, _panel(in_mat))
+    return out_mat
+end
+
+"Contract fiber batch `M` `(n_out, n_in, n_dep)` against `in_mat` into `out_mat`, applying `Mᵀ` under `transpose`."
 function _batched_matmul!(out_mat, M, in_mat, n_dep::Int, transpose::Bool)
+    n_dep == 1 && return _single_matmul!(out_mat, M, in_mat, transpose)
     Mmats  = reshape(M, size(M, 1), size(M, 2), n_dep)
     Mbatch = transpose ? batched_transpose(Mmats) : Mmats
     batched_mul!(out_mat, Mbatch, in_mat)

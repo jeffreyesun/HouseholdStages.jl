@@ -3,8 +3,7 @@ using HouseholdStages
 using ForwardDiff
 
 # EntryStage (forward source Λ_end = Λ + g, V identity) and the measure-half derived stage
-# ReproductionStage (Λ_end = s·Λ). Both grow/shrink Λ — mass is NOT conserved by design (a later
-# chunk audits the not-normalized invariant).
+# ReproductionStage (Λ_end = s·Λ). Both grow/shrink Λ — mass is NOT conserved by design.
 
 @testset "EntryStage — scalar uniform inflow grows Λ; V passes through" begin
     layout = GriddedLayout(:x => Discrete([1, 2, 3]))
@@ -50,7 +49,7 @@ end
 
 @testset "EntryStage — AD through a FromEnv scalar source (Dual mass)" begin
     layout = GriddedLayout(:x => Discrete([1, 2, 3]))
-    stage = lift_jacobian(EntryStage(layout; entry = FromEnv(:m)); mode = :forward, n_dual = 1)
+    stage = lift_jacobian(EntryStage(layout; entry = FromEnv(:m)); n_dual = 1)
     D = eltype(Λ_end_buffer(stage))
     md = D(0.2, ForwardDiff.Partials((1.0,)))
     backward!(stage, zeros(3), (m = md,))

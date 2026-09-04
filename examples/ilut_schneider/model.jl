@@ -115,7 +115,7 @@ function ilut_schneider_household(p = ilut_schneider_params; θ::Float64 = 1.0)
     receipt = IncomeStage(layout)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = ambiguity ∘ income_draw ∘ receipt ∘ savings
     return define_moments!(hh;
@@ -141,7 +141,7 @@ function ilut_schneider_reference(p = ilut_schneider_params)
     receipt = IncomeStage(layout)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = cycle ∘ income_draw ∘ receipt ∘ savings
     return define_moments!(hh;
@@ -159,15 +159,15 @@ ilut_schneider_env(p = ilut_schneider_params) = (; r = p.r, w = p.w)
 """
 Recover the chosen next-period wealth VALUES `b'(state)` from a solved
 household — the unique `(N_w, n_z·n_income)`-shaped policy-bearing leaf (the
-savings `ArgmaxStage`), with grid indices mapped to wealth values. Used for the
-distribution-free precautionary statistic in `steady_state.jl`.
+savings `ContinuousArgmaxStage`), whose policy holds the chosen next-wealth
+values directly. Used for the distribution-free precautionary statistic in
+`steady_state.jl`.
 """
 function ilut_schneider_savings_policy(hh, p = ilut_schneider_params)
-    wgrid = HouseholdStages.axisvalues(GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log))
     n_other = length(p.z_grid) * length(p.y_grid)
     leaves = filter(s -> !(s isa HouseholdStages.ChainStage) &&
                          hasmethod(HouseholdStages.policy, Tuple{typeof(s)}),
                     collect(hh.buffer.stages))
     savings = only(filter(s -> length(HouseholdStages.policy(s)) == p.N_w * n_other, leaves))
-    return wgrid[HouseholdStages.policy(savings)]
+    return HouseholdStages.policy(savings)
 end

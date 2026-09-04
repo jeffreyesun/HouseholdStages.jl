@@ -101,13 +101,13 @@ function indivisible_labor_household(p = indivisible_labor_params)
                      -vbar -vbar]
 
     shock    = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
-    choose   = ArgmaxStage(layout; axis = :participation, reward = part_reward, search = :brute)
+    choose   = ArgmaxStage(layout; axis = :participation, reward = part_reward)
     budget   = WealthChangeStage(layout; axis = :wealth,                       # cash = (1+r)b + w·ε·n̄·1{work}
         wealth_post = (; wealth, income, participation, env) ->
             (1 + env.r) * wealth + env.w * income * p.nbar * participation)
     savings  = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth)
 
     hh = shock ∘ choose ∘ budget ∘ savings

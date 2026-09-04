@@ -123,7 +123,7 @@ function kmp_household(p = kmp_params)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
     )
 

@@ -31,7 +31,7 @@ discretized to `N_z` states).
 |---|---|---|
 | `shock`    | `MarkovStage(:z)` | Productivity `z` transitions (persistent AR(1) in logs). |
 | `profit`   | `UtilityStage(z·n^θ − w·n)` | Flow profit: revenue `z·n^θ` (DRS, θ<1) net of the wage bill `w·n`. Closure `(; n, z) -> z·n^θ − w·n` reads **both** axes. |
-| `adjust`   | `ArgmaxStage(:n; reward = M)` | From `n` pick next headcount `n'`; reward `M[n', n] = −F·1{n' ≠ n}` — keeping is free, any change pays the fixed cost `F`. `search = :brute`. |
+| `adjust`   | `ArgmaxStage(:n; reward = M)` | From `n` pick next headcount `n'`; reward `M[n', n] = −F·1{n' ≠ n}` — keeping is free, any change pays the fixed cost `F`. Brute argmax. |
 | `discount` | `TimeDiscountingStage(β)` | Supplies `β·V_end` before the argmax, `β = 1/(1+r)`. |
 
 Block: **`shock ∘ profit ∘ adjust`** (where `adjust = ArgmaxStage ∘ TimeDiscountingStage`;
@@ -66,9 +66,9 @@ holding any level is costly, the per-period payoff is single-peaked in `n` (inte
 target `n*(z)`), and the **only** adjustment friction left is the fixed cost `F` —
 the textbook (S,s) inaction structure.
 
-**Why `:brute`.** The fixed cost `−F·1{n'≠n}` makes `M` **non-supermodular** (the
-diagonal is special), so the monotone/`:divide_conquer` solve does not apply; the
-argmax is taken by brute force over the `n'` grid.
+**Why brute.** The fixed cost `−F·1{n'≠n}` makes `M` **non-supermodular** (the
+diagonal is special), so a monotone solve would not apply; the argmax is taken by
+brute force over the `n'` grid.
 
 ## Outer loop (example-side, allowed)
 

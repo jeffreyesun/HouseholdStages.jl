@@ -5,10 +5,10 @@
 # A single fixed-price solve: returns, productivity, and the wage are
 # exogenous, so there is no outer tatonnement. The household block is
 # `OccChoice ∘ ⊕_occupation{worker, entrepreneur}` — library stages only, no
-# bespoke household stage (see `model.jl` for why the legs are forced to be
-# structurally uniform). The report shows the Quadrini / Cagetti–De Nardi
-# pattern: households sort into entrepreneurship by wealth and productivity, and
-# the entrepreneurial return premium fattens the top wealth tail.
+# bespoke household stage (see `model.jl` for why both legs run the same chain).
+# The report shows the Quadrini / Cagetti–De Nardi pattern: households sort into
+# entrepreneurship by wealth and productivity, and the entrepreneurial return
+# premium fattens the top wealth tail.
 
 include("model.jl")
 
@@ -29,7 +29,7 @@ function entrepreneurship_steady_state(p = entrepreneurship_params; a_floor = p.
     m   = compute_moments(hh, Λ, env)
 
     # Per-occupation decomposition from the stationary Λ (occupation at position 3).
-    out_layout = hh.buffer.output_layout
+    out_layout = end_layout(hh)
     cells      = cell_array(out_layout)
     wealth     = getproperty.(cells, :wealth)
 

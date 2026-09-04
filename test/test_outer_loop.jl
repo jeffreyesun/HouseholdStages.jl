@@ -1,5 +1,7 @@
 using Test
 using HouseholdStages
+using HouseholdStages: _sup_norm_diff, HhsLiftTag
+using ForwardDiff: Dual, value
 
 
 # A tiny Aiyagari-shaped chain — 2 income states, 20-point wealth grid —
@@ -26,7 +28,6 @@ function _tiny_aiyagari_household(layout::GriddedLayout;
         β               = β,
         utility         = (cell, c; env) -> u(c),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
     chain = income_shock ∘ income_receipt ∘ savings
     return define_moments!(chain;
@@ -83,7 +84,6 @@ end
     @test isapprox(sum(res.Λ), 1.0; atol = 1e-8)
     # Bellman fixed-point check
     @test maximum(abs, backward!(hh, res.V, env) .- res.V) < 1e-5
-    # Moments now flow through the public-helper bundle.
     @test res.moments.K_supplied > 0.0
 end
 
@@ -103,3 +103,50 @@ end
     @test res2.history.vfi_iters < res1.history.vfi_iters
     @test res2.history.lambda_iters < res1.history.lambda_iters
 end
+
+
+# A block must close #
+#--------------------#
+# Individual stages regrid freely; the fixed-point solvers feed a block's own output back into its
+# input, so the BLOCK's two ends have to agree. Layout equality, not size equality — a same-size
+# crosswalk is equally ill-posed and the sup-norm would never notice.
+
+@testset "the fixed-point solvers refuse a block that does not close" begin
+    l4  = GriddedLayout(:x => GriddedContinuous([0.0, 1.0, 2.0, 3.0]))
+    l2  = GriddedLayout(:x => GriddedContinuous([0.5, 2.5]))
+    l4′ = GriddedLayout(:x => GriddedContinuous([0.2, 1.1, 2.2, 3.3]))
+
+    shrinking = MarkovStage(l4, l2; axis = :x, transition_matrix = fill(0.25, 4, 2)) ∘ IdentityStage(l2)
+    @test_throws "must be the same layout" solve_vfi_steady_state_given_env!(shrinking, nothing)
+    @test_throws "must be the same layout" solve_lambda_steady_state_given_env!(shrinking)
+
+    # Same size at both ends, different coordinates: a shape check would pass this.
+    crossing = DeterministicContinuousStage(l4, l4′; axis = :x,
+                                            destination = (; x, env) -> 0.5x + 0.3) ∘ IdentityStage(l4′)
+    @test_throws "must be the same layout" solve_vfi_steady_state_given_env!(crossing, nothing)
+    @test_throws "must be the same layout" solve_transition_given_env_path!(
+        crossing.spec, [nothing]; Λ_0 = zeros(4), V_T = zeros(4), boundaries = boundaries(crossing))
+
+    # The square block it is built from still solves.
+    square = MarkovStage(l4; axis = :x, transition_matrix = fill(0.25, 4, 4)) ∘ IdentityStage(l4)
+    @test solve_vfi_steady_state_given_env!(square, nothing).converged
+end
+
+
+# The shared loop and its convergence metrics #
+#---------------------------------------------#
+
+@testset "the maxiter cap errors on the very step that converges" begin
+    layout = _tiny_aiyagari_layout()
+    hh  = _tiny_aiyagari_household(layout)
+    env = (; K = 5.0, _tiny_aiyagari_prices(5.0)...)
+    cold() = zero(V_start_buffer(hh))
+
+    n = solve_vfi_steady_state_given_env!(hh, env; V_init = cold(), tol = 1e-6).iters
+    # The cap is tested after the increment and without reading the freshly computed `diff`, so a
+    # run that converges ON the maxiter-th step still errors; `n + 1` is the smallest cap it passes.
+    @test_throws "failed to converge in $n iterations" solve_vfi_steady_state_given_env!(
+        hh, env; V_init = cold(), tol = 1e-6, maxiter = n)
+    @test solve_vfi_steady_state_given_env!(hh, env; V_init = cold(), tol = 1e-6, maxiter = n + 1).iters == n
+end
+

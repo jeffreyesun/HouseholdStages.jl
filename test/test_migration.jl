@@ -11,26 +11,15 @@ function _two_loc_layout(; n_w = 3, n_loc = 2)
     )
 end
 
-# Recompute the (origin → destination) choice-probability tensor from a
-# solved stage's kernel, replacing the removed `transition_choice_prob`.
-# eψC's compact parent is (origin, dest); value_weight/normalizer are full
-# layout-shaped, so for these `(wealth, location)` layouts they index as
-# `[wealth, location]`:  P(w, i → j) = eψC[i,j] · value_weight[w,j] / normalizer[w,i].
-function _choice_prob(stage, n_w, n_l)
-    k  = stage.kernel
-    eC = reshape(parent(k.eψC), n_l, n_l)
-    return [eC[i, j] * k.value_weight[w_i, j] / k.normalizer[w_i, i]
-            for w_i in 1:n_w, i in 1:n_l, j in 1:n_l]
-end
+# `choice_probabilities` is start-layout-shaped with the destination appended, so for these
+# `(wealth, location)` layouts it indexes as `P[w, i, j] = P(w, i → j)`.
 
-@testset "MigrationStage — cost matrix shape check (fires at backward!)" begin
+@testset "MigrationStage — cost matrix shape check (fires at construction)" begin
     layout = _two_loc_layout()
-    stage = MigrationStage(layout; axis = :location,
-        migration_cost = [0.0 0.5 0.0; 0.5 0.0 0.0], ε = 1.0)   # wrong shape
-    n_w, n_l = axissize.(layout.axes)
-    # A constant cost sizes the dense kernel from its own shape, so a wrong shape surfaces at the
-    # backward contraction (DimensionMismatch) rather than the fill assertion.
-    @test_throws DimensionMismatch backward!(stage, zeros(n_w, n_l), NamedTuple())
+    # The two layouts give the cost's `(n_origin, n_dest)`; a literal matrix of another shape is
+    # refused where it is written, not left to blow up inside the backward contraction.
+    @test_throws AssertionError MigrationStage(layout; axis = :location,
+        migration_cost = [0.0 0.5 0.0; 0.5 0.0 0.0], ε = 1.0)
 end
 
 @testset "MigrationStage — backward / forward at finite ε" begin
@@ -59,7 +48,7 @@ end
     end
 
     # Probabilities sum to 1 along the destination axis.
-    prob = _choice_prob(stage, n_w, n_l)
+    prob = choice_probabilities(stage)
     for w_i in 1:n_w, i in 1:n_l
         @test sum(prob[w_i, i, j] for j in 1:n_l) ≈ 1.0 atol = 1e-12
     end
@@ -85,7 +74,7 @@ end
     V_end[:, 1] .= 1.0   # home is much more valuable
 
     backward!(stage, V_end, NamedTuple())
-    prob = _choice_prob(stage, n_w, n_l)
+    prob = choice_probabilities(stage)
     # From every origin, the policy should concentrate on home (j = 1).
     for w_i in 1:n_w, i in 1:n_l
         @test prob[w_i, i, 1] > 0.999
@@ -116,7 +105,7 @@ end
     # didn't separate the cost. So check the operator identity directly:
     # ⟨V_end, Λ_end⟩ = ⟨V_pre, Λ_start⟩ - ⟨cost · p, Λ_start⟩.
     # Compute the "cost ⋅ p" correction.
-    prob = _choice_prob(stage, n_w, n_l)
+    prob = choice_probabilities(stage)
     cost_per_cell = zeros(n_w, n_l)
     for w_i in 1:n_w, i in 1:n_l
         cost_per_cell[w_i, i] = sum(C[i, j] * prob[w_i, i, j] for j in 1:n_l)
@@ -181,10 +170,9 @@ end
 end
 
 @testset "MigrationStage — destination amenity is composition with a UtilityStage" begin
-    # A destination amenity a[j] used to be a stage kwarg; it is exactly a
-    # UtilityStage composed before the migration logit (the V-additive
-    # decomposition). Effective utility per (origin, destination) is then
-    # -C[i,j] + a[j] + V_end[j, s], matching the old amenity closed form.
+    # A destination amenity a[j] is exactly a UtilityStage composed before the migration logit —
+    # the V-additive decomposition. Effective utility per (origin, destination) is then
+    # -C[i,j] + a[j] + V_end[j, s], which is the closed form asserted below.
     layout = _two_loc_layout()
     C = [0.0 0.5;
          0.5 0.0]
@@ -202,10 +190,8 @@ end
         @test V_pre[w_i, i] ≈ expected atol = 1e-12
     end
 
-    # Prob mass should concentrate on destination 2 (the logit sub-stage, modern).
-    k = stage.buffer.stages[1].kernel
-    eC = reshape(parent(k.eψC), n_l, n_l)
-    prob = [eC[i, j] * k.value_weight[w_i, j] / k.normalizer[w_i, i] for w_i in 1:n_w, i in 1:n_l, j in 1:n_l]
+    # Prob mass should concentrate on destination 2 (the logit sub-stage).
+    prob = choice_probabilities(stage.buffer.stages[1])
     for w_i in 1:n_w, i in 1:n_l
         @test prob[w_i, i, 2] > prob[w_i, i, 1]
     end
@@ -228,9 +214,9 @@ end
     C_dear  = [0.0 4.0; 4.0 0.0]                     # very costly to move
 
     V_cheap = copy(backward!(stage, V_end, (C = C_cheap,)))
-    prob_cheap = _choice_prob(stage, n_w, n_l)
+    prob_cheap = choice_probabilities(stage)
     V_dear  = copy(backward!(stage, V_end, (C = C_dear,)))
-    prob_dear  = _choice_prob(stage, n_w, n_l)
+    prob_dear  = choice_probabilities(stage)
 
     # Closed form holds at each env cost.
     for w_i in 1:n_w, i in 1:n_l
@@ -261,9 +247,9 @@ end
     V_end = zeros(n_w, n_l); V_end[:, 2] .= 1.0
 
     backward!(stage, V_end, (C = 0.2 .* base,))       # low mobility cost
-    p_lo = _choice_prob(stage, n_w, n_l)
+    p_lo = choice_probabilities(stage)
     backward!(stage, V_end, (C = 5.0 .* base,))       # high mobility cost
-    p_hi = _choice_prob(stage, n_w, n_l)
+    p_hi = choice_probabilities(stage)
     # Higher mobility cost ⇒ less moving to the more-valuable :abroad from :home.
     @test p_hi[1, 1, 2] < p_lo[1, 1, 2]
 end
@@ -285,22 +271,21 @@ end
     n_w, n_t, n_l = axissize.(layout.axes)
     V_end = zeros(n_w, n_t, n_l); V_end[:, :, 2] .= 1.0      # :abroad more valuable
     backward!(stage, V_end, NamedTuple())
-    k = stage.kernel
 
-    # Dep-only storage: eψC's compact parent is (origin, dest, tenure), NOT over wealth.
-    eC = reshape(parent(k.eψC), n_l, n_l, n_t)
-    @test size(eC) == (n_l, n_l, n_t)
-    @test ndims(eC) == 3 && size(eC, 3) == n_t
+    # Dep-only storage: eψC's compact fiber array is (dest, origin, tenure), NOT over wealth.
+    @test size(parent(stage.kernel.eψC)) == (n_l, n_l, n_t)
 
-    # P(j | wealth, tenure, origin). value_weight/normalizer are layout-shaped (wealth, tenure, location).
-    P(w, t, i, j) = eC[i, j, t] * k.value_weight[w, t, j] / k.normalizer[w, t, i]
+    # P[wealth, tenure, origin, dest]: the start layout (wealth, tenure, location) with the
+    # destination appended.
+    P = choice_probabilities(stage)
+    @test size(P) == (n_w, n_t, n_l, n_l)
 
     # Owners (t = 2) never move; renters (t = 1) do move toward the better location.
     for w in 1:n_w, i in 1:n_l, j in 1:n_l
-        i != j && @test P(w, 2, i, j) < 1e-12
+        i != j && @test P[w, 2, i, j] < 1e-12
     end
-    @test P(1, 2, 1, 1) > 0.999                              # owner stays home
-    @test P(1, 1, 1, 2) > 0.3                                # renter moves home → abroad
+    @test P[1, 2, 1, 1] > 0.999                              # owner stays home
+    @test P[1, 1, 1, 2] > 0.3                                # renter moves home → abroad
 
     # Mass conservation; closed-form (Gibbs no-leak) for the dep-varying cost.
     Λ0 = fill(1.0 / (n_w * n_t * n_l), n_w, n_t, n_l)
@@ -331,12 +316,10 @@ end
     Λ_start = abs.(randn(n_z, n_l)); Λ_start ./= sum(Λ_start)
     backward!(stage, V_end, env)
     Λ_end = copy(forward!(stage, Λ_start))
-    k = stage.kernel
 
     # Linear-K duality ⟨K_lin V_end, Λ_start⟩ = ⟨V_end, Λ_end⟩.
-    eC = reshape(parent(k.eψC), n_l, n_l, n_z)
-    P(z, i, j) = eC[i, j, z] * k.value_weight[z, j] / k.normalizer[z, i]
-    K_lin_V = [sum(P(z, i, j) * V_end[z, j] for j in 1:n_l) for z in 1:n_z, i in 1:n_l]
+    P = choice_probabilities(stage)
+    K_lin_V = [sum(P[z, i, j] * V_end[z, j] for j in 1:n_l) for z in 1:n_z, i in 1:n_l]
     @test sum(K_lin_V .* Λ_start) ≈ sum(V_end .* Λ_end) atol = 1e-12
 
     # Adjoint dot-product test on forward.

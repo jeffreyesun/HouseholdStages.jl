@@ -183,8 +183,8 @@ function clementi_palazzo_firm(p = clementi_palazzo_params)
         axis         = :k,
         β            = 1 / (1 + p.r),
         depreciation = p.δ,
-        production   = (k; env) -> 0.0,                 # operating profit lives in the UtilityStage
-        effort_cost  = (i; env) -> p.φ * i^2)           # convex cost on gross investment i ≥ 0
+        production   = (k) -> 0.0,                 # operating profit lives in the UtilityStage
+        effort_cost  = (i) -> p.φ * i^2)           # convex cost on gross investment i ≥ 0
     exit   = EndogenousExit(layout; bequest = (; k) -> p.resale * k)   # max(continuation, resale·k)
     profit = UtilityStage(layout; utility = (; k, z) -> z * k^p.α - p.c_f)  # reads BOTH k and z
     entry  = EntryStage(layout; entry = p.M .* g)       # Λ += M·g, shaped (k, z, exiting=1)

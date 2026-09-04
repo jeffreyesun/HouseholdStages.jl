@@ -29,8 +29,8 @@
 #              `M[n', n] = −F·1{n' ≠ n}`: keeping the headcount (n' = n, the diagonal) is free;
 #              moving to any other level pays the FIXED hiring/firing cost F (the lump). The
 #              inaction band is the set of (n, z) where re-tuning does not beat keeping.
-#              `search = :brute`: the fixed cost makes the reward NON-supermodular, so the
-#              monotone solve does not apply. A plain (after, before) Matrix IS the normal
+#              Brute argmax: the fixed cost makes the reward NON-supermodular (a monotone walk
+#              would mis-solve). A plain (after, before) Matrix IS the normal
 #              ArgmaxStage reward parameterization.
 # `Discount` — TimeDiscountingStage, β = 1/(1+r), supplying β·V_end before the argmax.
 #
@@ -132,9 +132,10 @@ function lumpy_labor_firm(p = lumpy_labor_params)
     # hiring/firing cost F (the lump). The per-period cost of the level itself is the wage bill in
     # `profit` above, so the only adjustment friction here is F — the textbook (S,s) inaction band.
     # A plain (after, before) Matrix IS the normal ArgmaxStage reward parameterization; the fixed
-    # cost makes M non-supermodular ⇒ :brute.
+    # cost makes M non-supermodular, so the brute ArgmaxStage (not ContinuousArgmaxStage) is the
+    # right primitive.
     M = [jn == in ? 0.0 : -p.F for jn in 1:p.N_n, in in 1:p.N_n]        # M[after, before]
-    adjust = ArgmaxStage(layout; reward = M, axis = :n, search = :brute) ∘
+    adjust = ArgmaxStage(layout; reward = M, axis = :n) ∘
              TimeDiscountingStage(layout; β = 1 / (1 + p.r))
 
     firm = shock ∘ profit ∘ adjust

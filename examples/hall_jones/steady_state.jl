@@ -23,7 +23,7 @@ health-spending share.
 """
 function hall_jones_cohort(w::Real, p = hall_jones_params; verbosity = 0)
     hh    = hall_jones_household(p)
-    cells = cell_array(output_layout(hh))                       # (N_w, N_h, 2, 1)
+    cells = cell_array(end_layout(hh))                       # (N_w, N_h, 2, 1)
     hgrid = collect(range(p.h_min, p.h_max; length = p.N_h))
     wgrid = collect(Float64, axisvalues(GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log)))
     sz    = size(cells)

@@ -13,8 +13,8 @@ using HouseholdStages
     @test ps isa ProductStage
     @test ps.spec.axis === :group
     @test length(ps.spec.components) == 2
-    @test layout_size(input_layout(ps)) == (2, 2)
-    @test layout_size(output_layout(ps)) == (2, 2)
+    @test layout_size(start_layout(ps)) == (2, 2)
+    @test layout_size(end_layout(ps)) == (2, 2)
 end
 
 @testset "product — backward & forward run per-component" begin
@@ -51,7 +51,7 @@ end
     ages = replicate_age(s, 5)
     @test ages.spec.axis === :age
     @test length(ages.spec.components) == 5
-    @test layout_size(input_layout(ages)) == (2, 5)
+    @test layout_size(start_layout(ages)) == (2, 5)
 end
 
 # Each product-axis slice equals the component run standalone (on a size-1 slice, with i:i to keep
@@ -85,7 +85,7 @@ end
     s1 = MarkovStage(layout; axis = :z, transition_matrix = P)
     s2 = MarkovStage(layout; axis = :z, transition_matrix = P)
     ps = product(s1, s2; axis = :group)
-    @test layout_size(input_layout(ps)) == (2, 2)        # (group, z)
+    @test layout_size(start_layout(ps)) == (2, 2)        # (group, z)
 
     V_end = randn(2, 2)
     V_start = backward!(ps, V_end, NamedTuple())
@@ -121,12 +121,12 @@ end
     ps = product(s1, s2; axis = :group)
     pdim = 3                                            # :group axis position
 
-    V_end = randn(layout_size(output_layout(ps)))      # (w, t = 1, group = 2)
+    V_end = randn(layout_size(end_layout(ps)))      # (w, t = 1, group = 2)
     V_start = backward!(ps, V_end, NamedTuple())
     @test selectdim(V_start, pdim, 1:1) ≈ backward!(s1, selectdim(V_end, pdim, 1:1), nothing)
     @test selectdim(V_start, pdim, 2:2) ≈ backward!(s2, selectdim(V_end, pdim, 2:2), nothing)
 
-    Λ_start = rand(layout_size(input_layout(ps))...)   # (w, t, group)
+    Λ_start = rand(layout_size(start_layout(ps))...)   # (w, t, group)
     Λ_end = forward!(ps, Λ_start)
     @test selectdim(Λ_end, pdim, 1:1) ≈ forward!(s1, copy(selectdim(Λ_start, pdim, 1:1)))
     @test selectdim(Λ_end, pdim, 2:2) ≈ forward!(s2, copy(selectdim(Λ_start, pdim, 2:2)))
@@ -152,12 +152,18 @@ end
     @test Λ_end[:, 2:2] ≈ forward!(s2, Λ_start[:, 2:2])
 end
 
-@testset "product — heterogeneous types error" begin
+@testset "product — heterogeneous factors run side by side" begin
+    # Factors need only agree on their two layouts; their specs are free to differ.
     layout = GriddedLayout(:z => Discrete([0.5, 1.5]), :group => Discrete([1]))
     P = [0.5 0.5; 0.5 0.5]
     s1 = MarkovStage(layout; axis = :z, transition_matrix = P)
     s2 = IdentityStage(layout)
-    @test_throws AssertionError product(s1, s2; axis = :group)
+    ps = product(s1, s2; axis = :group)
+
+    V_end = randn(2, 2)
+    V_start = backward!(ps, V_end, NamedTuple())
+    @test V_start[:, 1:1] ≈ backward!(s1, V_end[:, 1:1], NamedTuple())
+    @test V_start[:, 2:2] ≈ V_end[:, 2:2]
 end
 
 @testset "product — missing product axis errors (no introduce)" begin

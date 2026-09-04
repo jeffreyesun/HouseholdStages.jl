@@ -51,16 +51,13 @@ up, the logit splits that mass across the two decisions by the softmax, `Reset`
 sends the replace branch to 0, and `Forget` sums the branches — **mass is
 conserved** (no exit).
 
-### Why `Advance` leads (a framework detail)
+### Why `Advance` leads
 
-The growing logit **cannot be the first stage**: a `ChainStage` inherits its
-boundary (input) layout from the first stage's *construction* layout, and the
-logit is necessarily built on the full destination size 2 (`:decision ∈ {keep,
-replace}`). Leading with `Advance` (built on the decision-singleton layout) keeps
-the period boundary at size 1, exactly as the exit composite keeps its growing
-`:exiting` choice *inside* the chain. The reformulation is itself canonical — it
-is Rust's conditional-expectation (`EV`) form, with the manager acting on the
-realized post-deterioration mileage.
+Leading with `Advance` (built on the decision-singleton layout) keeps the period
+boundary at `:decision` size 1, so the choice axis is transient — exactly as the
+exit composite keeps its growing `:exiting` choice *inside* the chain. The
+ordering is itself canonical: it is Rust's conditional-expectation (`EV`) form,
+with the manager acting on the realized post-deterioration mileage.
 
 ## Equilibrium notes
 

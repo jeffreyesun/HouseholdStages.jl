@@ -19,13 +19,14 @@ IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Attention
 | `IncomeShock` | `MarkovStage` | draw next income on the `:income` axis |
 | `Receipt` | `WealthChangeStage` | `b ↦ (1+r) b + w·y` |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | pick next wealth `b'`, `c = b_in − b'`, CRRA utility |
-| `Attention` | `ScaleVarianceStage` | pick dispersion `θ` of `b' ↦ b' + θ·ξ` (ξ mean-zero) at cost `c(θ) = λ·θ²` |
+| `Attention` | `MeanPreservingSpreadStage` | pick the continuous dispersion `θ ∈ [0, θ_max]` of a Gaussian mean-preserving spread of `b'` (sd `θ`, clamped) at cost `c(θ) = λ·θ²` |
 
-`ScaleVarianceStage` is the streaming variance/MPS primitive (`O(n_w)`, no θ-axis): it streams the
-candidate dispersions, seats the per-cell optimal `θ*(x)`, and pushes mass through the chosen
+`MeanPreservingSpreadStage` is the continuous variance/MPS primitive (`O(n_w)`, no θ-axis): per cell
+it solves the smooth Gaussian-spread objective for `θ*` (internal scan + Newton), seats the per-cell
+optimal `θ*(x)`, and pushes mass through the chosen
 mean-preserving spread. `θ = 0` is **perfect attention** (no noise, no cost); larger `θ` is a noisier
-signal about the state. The cost `c(θ) = λ·θ²` is a **stand-in for `λ·KL(θ)`** — the prompt's
-information-cost placeholder, not a literal Shannon mutual-information term.
+signal about the state. The cost `c(θ) = λ·θ²` is a **stand-in for `λ·KL(θ)`** — a quadratic
+placeholder for the information cost, not a literal Shannon mutual-information term.
 
 ## Why θ\* is interior (the economics)
 

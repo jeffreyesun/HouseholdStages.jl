@@ -38,15 +38,14 @@
 # only the decentralized household block is built. Fixed-`r` single solve.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# WHY A `UtilityStage` PENALTY, NOT `BorrowingConstraintStage`. The natural API
-# is `BorrowingConstraintStage(infeasible = …)`, which masks with `−Inf`. That is
-# unusable in the VFI loop: its convergence metric `maximum(abs, V_new .- V)`
-# evaluates to `NaN` at steady `−Inf` cells (`−Inf − −Inf = NaN`), so iteration
-# stops after 2 passes with an unconverged V (see
-# `examples/borrowing_constraint/model.jl` for the full diagnosis). A FINITE
-# penalty `−PEN` is the within-constraints stand-in: large enough to deter
-# violations, finite so the VFI norm stays well-defined. The grid floor sits well
-# inside the natural limit so no cell is an infeasible CRRA trap.
+# WHY A `UtilityStage` PENALTY, NOT `BorrowingConstraintStage`. The solvency
+# bounds are state-dependent and interior to the grid, and the model's content
+# is that agents WEIGH violating them: a finite penalty `−PEN` (large enough to
+# deter violations in equilibrium) prices the deviation while keeping V finite
+# everywhere, so every norm, moment, and diagnostic stays well-defined. The
+# grid floor sits well inside the natural limit so no cell is an infeasible
+# CRRA trap. A hard `−Inf` gate is for genuinely inadmissible cells — see
+# `examples/mortgage_refinancing` — not for priced violations.
 # ─────────────────────────────────────────────────────────────────────────────
 
 using HouseholdStages
@@ -119,7 +118,7 @@ function limited_commitment_household(p = limited_commitment_params)
     )
     savings   = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
     )
     solvency  = UtilityStage(layout;

@@ -105,14 +105,10 @@ end
 """
 The life-cycle household block: `replicate_age(IncomeShock ∘ Receipt ∘
 ConsumptionSavings, N; axis = :age)` with a life-cycle `mean_wealth` moment
-attached. The within-period chain and the `(wealth, income, age)` layout are
-inlined; the `:age` axis enters as a size-1 singleton (the product grows it to
-`N`). Returns the moment-attached `ProductStage`; the finite-horizon backward+
-forward sweep that wires the age-slices together lives in `steady_state.jl`.
+attached. The `:age` axis enters the layout as a size-1 singleton;
+`replicate_age` grows it to `N`, one slice per age.
 """
 function life_cycle_household(p = life_cycle_params)
-    # The per-age chain is built against the layout with `:age` a size-1
-    # singleton; `replicate_age` resizes it `1 → N`, one slice per age.
     layout = GriddedLayout(
         :wealth => GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log),
         :income => Discrete(p.ε_grid),
@@ -124,8 +120,8 @@ function life_cycle_household(p = life_cycle_params)
         wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + env.y * income) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     age_chain = shock ∘ receipt ∘ savings
     hh = replicate_age(age_chain, p.N; axis = :age)

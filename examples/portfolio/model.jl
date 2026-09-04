@@ -14,9 +14,13 @@
 # `Receipt`      — `WealthChangeStage` `a ↦ a + w·y` (cash-on-hand).
 # `ConsumptionSavings` — `ConsumptionSavingsStage` picks next-period
 #                  financial wealth `b'` on the wealth grid; `c = x − b'`.
-# `Portfolio`    — `MeanVarianceStage` picks the risky share `θ`, so next
-#                  wealth is `b'·(R_f + θ·(R_k − R_f))` for risky gross
-#                  returns `R_k`. Higher `θ` raises the mean and variance
+# `Portfolio`    — `GaussianLoadingStage`, here read as the portfolio stage
+#                  (anchor = R_f, increment = the Gaussian excess return): picks
+#                  the CONTINUOUS risky share
+#                  `θ ∈ [0, 1]`, so next wealth is `b'·(R_f + θ·(μ_x + σ_x·Z))`
+#                  for a truncated-Gaussian excess return with moments
+#                  `(μ_x, σ_x)` matched to the two-point lottery
+#                  `(R_risky, p_risky)`. Higher `θ` raises the mean and variance
 #                  of next wealth; risk-averse CRRA agents pick interior θ.
 #
 # Returns are exogenous (partial equilibrium): there is no market to clear,
@@ -40,8 +44,7 @@ using HouseholdStages
                                  0.05 0.25 0.70]
     R_f     :: Float64 = 1.02                     # gross risk-free return
     R_risky :: Vector{Float64} = [0.85, 1.25]     # gross risky returns (mean 1.05 ⇒ 3% premium)
-    p_risky :: Vector{Float64} = [0.5, 0.5]
-    shares  :: Vector{Float64} = collect(0.0:0.1:1.0)
+    p_risky :: Vector{Float64} = [0.5, 0.5]       # feed the Gaussian excess moments (μ_x, σ_x) below
     N_w   :: Int       = 200
     w_min :: Float64   = 0.0
     w_max :: Float64   = 60.0
@@ -57,7 +60,7 @@ const portfolio_params = PortfolioParams()
 
 """
 Build the portfolio household block `IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Portfolio`, with
-`mean_wealth = ∫ wealth dΛ` and `mean_risky_share = ∫ θ*(x) dΛ` attached. Four existing stages, no
+`mean_wealth = ∫ wealth dΛ` attached (θ* is read via `policy` in the driver). Four existing stages, no
 bespoke household stage.
 """
 function portfolio_household(p = portfolio_params)
@@ -71,10 +74,13 @@ function portfolio_household(p = portfolio_params)
         wealth_post = (; wealth, income, env) -> wealth + env.w * income)        # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)))
-        # defaults: (; axis = :wealth, monotone_search = :divide_conquer, assume_monotone = false, utility_axes = nothing)
-    portfolio = MeanVarianceStage(layout;                                     # defaults: (; axis = :wealth, cost = (θ; env) -> 0.0)
-        shares = p.shares, risk_free = p.R_f, risky_returns = p.R_risky, probs = p.p_risky)
+        utility         = (cell, c) -> u_crra(c, Val(p.σ)))
+        # defaults: (; axis = :wealth, skip_monotonicity_check = false, utility_axes = nothing)
+    # Gaussian excess-return moments matched to the two-point lottery's excess returns.
+    μx = sum(p.p_risky .* (p.R_risky .- p.R_f))                               # E[R_k] − R_f = 0.03
+    σx = sqrt(sum(p.p_risky .* (p.R_risky .- p.R_f) .^ 2) - μx^2)             # sd of R_k − R_f = 0.20
+    portfolio = GaussianLoadingStage(layout;                                     # defaults: (; axis = :wealth, loading_bounds = (0.0, 1.0), cost = (θ; env) -> 0.0)
+        anchor = p.R_f, increment_mean = μx, increment_sd = σx)
 
     hh = shock ∘ receipt ∘ savings ∘ portfolio
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))

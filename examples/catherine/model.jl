@@ -55,11 +55,14 @@ using HouseholdStages
     y_curv     :: Float64 = 0.5
     repl       :: Float64 = 0.4
 
-    # Portfolio block (mean premium ≈ 5%).
+    # Portfolio block (mean premium ≈ 5%) — `GaussianLoadingStage` in its canonical
+    # portfolio reading (anchor = R_f, increment = the Gaussian excess return). The
+    # literature's lognormal equity return enters through its first two excess
+    # moments — the stage's truncated-Gaussian excess is moment-matched to
+    # (R_risky, p_risky) below.
     R_f     :: Float64 = 1.02
     R_risky :: Vector{Float64} = [0.86, 1.28]
     p_risky :: Vector{Float64} = [0.5, 0.5]
-    shares  :: Vector{Float64} = collect(0.0:0.05:1.0)
 
     N_w   :: Int       = 100
     w_min :: Float64   = 0.0
@@ -173,10 +176,13 @@ function catherine_household(p = catherine_params)
         wealth_post = (; wealth, income, env) -> wealth + env.y * income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
-    portfolio = MeanVarianceStage(layout;
-        shares = p.shares, risk_free = p.R_f, risky_returns = p.R_risky, probs = p.p_risky)
+    # Gaussian excess-return moments matched to the two-point lottery's excess returns.
+    μx = sum(p.p_risky .* (p.R_risky .- p.R_f))                               # 0.05
+    σx = sqrt(sum(p.p_risky .* (p.R_risky .- p.R_f) .^ 2) - μx^2)             # 0.21
+    portfolio = GaussianLoadingStage(layout;                                     # defaults: (; axis = :wealth, loading_bounds = (0.0, 1.0))
+        anchor = p.R_f, increment_mean = μx, increment_sd = σx)
 
     age_chain = shock ∘ receipt ∘ savings ∘ portfolio
     hh = replicate_age(age_chain, p.N; axis = :age)

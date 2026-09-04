@@ -140,7 +140,7 @@ function soft_default_household(p = soft_default_params)
         wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = shock ∘ default ∘ receipt ∘ savings
     return define_moments!(hh;

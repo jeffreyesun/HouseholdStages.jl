@@ -92,8 +92,8 @@ function ks_household(p = ks_params)
     receipt = IncomeStage(layout) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.γ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.γ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;

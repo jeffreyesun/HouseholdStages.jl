@@ -154,9 +154,9 @@ function promotion_household(p = promotion_params)
         wealth_post = (; wealth, rung, env) -> (1 + env.r) * wealth + rung,
     )
 
-    savings = ConsumptionSavingsStage(layout;      # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;      # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     # Per-rung mass indicators (one moment per rung) for the rung distribution.

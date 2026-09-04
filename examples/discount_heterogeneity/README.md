@@ -15,8 +15,9 @@ block_i = MarkovStage(:income) ∘ IncomeStage ∘ ConsumptionSavingsStage(β = 
 household = product(block_1, …, block_n; axis = :beta)
 ```
 
-`β` is a `Float64` field, so all per-type blocks share an identical concrete
-Spec type and input layout — exactly the uniformity `product` requires. The
+`β` is a `Float64` field, so all per-type blocks are one chain at different
+parameter values, sharing the start and end layouts `product` asks of its
+factors. The
 `:beta` axis is a size-1 **singleton** in the block layout; `product` grows it
 `1 → n`. The direct sum is block-diagonal (a household keeps its β forever), so
 each slice is its own independent stationary problem.

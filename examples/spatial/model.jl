@@ -86,9 +86,9 @@ function spatial_household(p = params)
             return (1 + r_loc) * wealth + w_loc * income
         end,
     )
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock ∘ move ∘ receipt ∘ savings

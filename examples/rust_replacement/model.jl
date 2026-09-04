@@ -35,11 +35,11 @@
 #   Advance ∘ Choose ∘ FlowCost ∘ Discount ∘ Reset ∘ Forget
 #
 # `Advance`  — `MarkovStage` on `:mileage`: the stochastic deterioration increment.
-#              It LEADS the block (built on the decision-singleton layout) so the
-#              chain's boundary layout has `:decision` at size 1; the growing logit
-#              cannot be the first stage, since the chain takes its input layout from
-#              the first stage's construction layout (which the logit carries at the
-#              full destination size 2).
+#              It LEADS the block, on the decision-singleton layout, so the period
+#              boundary carries `:decision` at size 1 and the axis is transient. The
+#              ordering is Rust's own: the manager acts on the realized
+#              post-deterioration mileage, which is the conditional-expectation (`EV`)
+#              form.
 # `Choose`   — `LogitChoiceStage` growing the transient `:decision` axis 1 → 2
 #              ({keep, replace}). The cost matrix is all-zeros: every payoff is a
 #              DESTINATION payoff (V-additive), so it lives in `FlowCost`, not in
@@ -124,11 +124,11 @@ softmax-weighted moment the driver forms from `(V, Λ)` (the `:decision` axis is
 function rust_household(p = rust_params)
     xgrid = collect(range(0.0, p.x_max; length = p.N_x))
     mileage = GriddedContinuous(xgrid)
-    # The `:decision` axis is transient: a SINGLETON at the period boundary (the block's input/output
+    # The `:decision` axis is transient: a SINGLETON at the period boundary (the block's start and end
     # layout, carried by the leading `Advance`) and FULL (1 = keep, 2 = replace) inside the choice block.
     # `Choose` grows 1 → 2; `Forget` collapses 2 → 1 — the auxiliary-choice-axis pattern, exactly as the
-    # exit composite threads `:exiting`. The growing logit must NOT lead the chain (the chain inherits its
-    # boundary layout from the first stage's construction layout), so `Advance` leads on `block`.
+    # exit composite threads `:exiting`. `Advance` leads on `block`, so the axis is a singleton at the
+    # period boundary and full only inside the choice.
     block = GriddedLayout(:mileage => mileage, :decision => Discrete([1]))
     full  = GriddedLayout(:mileage => mileage, :decision => Discrete([1, 2]))   # 1 = keep, 2 = replace
 
@@ -137,7 +137,7 @@ function rust_household(p = rust_params)
 
     # Choose: smooth keep/replace. The cost matrix is all-zeros (origin singleton → 2 destinations); the
     # real payoffs are destination payoffs and so are V-additive — they belong in `FlowCost`, never here.
-    choose = LogitChoiceStage(full; axis = :decision, cost_matrix = zeros(1, 2), ε = p.ε)
+    choose = LogitChoiceStage(block, full; axis = :decision, cost_matrix = zeros(1, 2), ε = p.ε)
 
     # FlowCost: the contemporaneous cost. KEEP pays operating cost c(x); REPLACE pays RC + c(0).
     flowcost = UtilityStage(full;

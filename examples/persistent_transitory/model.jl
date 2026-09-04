@@ -84,7 +84,7 @@ function persistent_transitory_household(p = persistent_transitory_params)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock_z ∘ shock_ν ∘ receipt ∘ savings

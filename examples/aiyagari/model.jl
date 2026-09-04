@@ -53,10 +53,9 @@ const aiyagari_params = AiyagariParams()
 #--------------------------#
 
 """
-Build the moment-attached Aiyagari household block
+Build the Aiyagari household block
 `IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavingsStage` with the
-`K_supplied = ∫ wealth dΛ` moment attached. The wealth-axis log grid
-and the three-stage layout are inlined here.
+`K_supplied = ∫ wealth dΛ` moment attached.
 """
 function aiyagari_household(p = aiyagari_params)
     layout = GriddedLayout(
@@ -68,8 +67,8 @@ function aiyagari_household(p = aiyagari_params)
     receipt = IncomeStage(layout) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;

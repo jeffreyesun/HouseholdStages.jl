@@ -203,7 +203,7 @@ function collateral_investment_household(p = collateral_investment_params)
         wealth_post = (; wealth, z, env) -> (1 + env.r) * wealth + operating_profit(wealth, z, env))
     savings = ConsumptionSavingsStage(layout;    # cash-on-hand ↦ next net worth a'
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth)
     shock   = MarkovStage(layout; axis = :z, transition_matrix = P_z)   # z drawn at period end
 

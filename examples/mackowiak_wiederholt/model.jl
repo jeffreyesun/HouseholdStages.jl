@@ -24,22 +24,23 @@
 #                        which the aggregate condition matters).
 # `ConsumptionSavings` — `ConsumptionSavingsStage` picks next wealth `b'`;
 #                        `c = b_in − b'`, CRRA.
-# `Attention`          — `ScaleVarianceStage` on `:wealth` picks the dispersion
-#                        `θ` of a mean-preserving spread `b' ↦ b' + θ·ξ`
-#                        (ξ mean-zero) at the KL-style information cost
-#                        `c(θ) = λ·θ²`. This is the agent's ONE attention
-#                        margin — precision about its own (idiosyncratic)
-#                        carried wealth state. `θ = 0` is perfect attention;
-#                        larger `θ` is a noisier (cheaper) read of the state.
+# `Attention`          — `MeanPreservingSpreadStage` on `:wealth` picks the
+#                        CONTINUOUS dispersion `θ ∈ [0, θ_max]` of a Gaussian
+#                        mean-preserving spread of `b'` (sd θ, clamped) at the
+#                        KL-style information cost `c(θ) = λ·θ²`. This is the
+#                        agent's ONE attention margin — precision about its own
+#                        (idiosyncratic) carried wealth state. `θ = 0` is
+#                        perfect attention; larger `θ` is a noisier (cheaper)
+#                        read of the state.
 #
 # What is faithful, and what is the gap. The MW mechanism is the ALLOCATION of
 # a finite attention capacity across MULTIPLE signals — aggregate vs
 # idiosyncratic — coupling their precisions through ONE budget constraint.
 # That coupled multi-signal budget is a recorded G3-adjacent gap (MODEL_CATALOG
 # §2 / gaps item 5): a single Shannon constraint over several precisions is not
-# one univariate streaming stage, because each per-axis `ScaleVarianceStage`
+# one univariate stage, because each per-axis `MeanPreservingSpreadStage`
 # optimises its own θ independently — there is no shared-budget coupler in the
-# per-axis streaming vocabulary. What IS faithful, and what this example builds,
+# per-axis vocabulary. What IS faithful, and what this example builds,
 # is the SINGLE-MARGIN household: one attention choice (here, to the
 # idiosyncratic wealth state) priced at `λ·θ²`, with the aggregate condition
 # entering exogenously. The attention gradient — θ* responding to λ and to the
@@ -80,10 +81,8 @@ using HouseholdStages
     z_grid :: Vector{Float64} = [0.95, 1.05]
     P_z    :: Matrix{Float64} = [0.8 0.2;
                                  0.2 0.8]
-    # Attention margin (mean-preserving spread of next wealth).
-    dispersions :: Vector{Float64} = collect(0.0:0.25:1.0)   # θ grid (0 = perfect attention)
-    shocks      :: Vector{Float64} = [-1.0, 1.0]             # mean-zero signal-noise support ξ
-    weights     :: Vector{Float64} = [0.5, 0.5]
+    # Attention margin (Gaussian mean-preserving spread of next wealth).
+    θ_max :: Float64   = 1.0                       # dispersion cap (θ = 0 is perfect attention)
     N_w   :: Int       = 80
     w_min :: Float64   = 0.0
     w_max :: Float64   = 8.0
@@ -105,8 +104,9 @@ Build the single-margin Maćkowiak–Wiederholt household block
 `mean_wealth = ∫ wealth dΛ` attached. Five existing stages, no bespoke
 household stage: an aggregate `:z` `MarkovStage`, an idiosyncratic `:income`
 `MarkovStage`, the receipt (aggregate `z` scaling the wage), the savings spine,
-and the `Attention` leaf — a `ScaleVarianceStage` choosing the dispersion θ of
-next-period wealth at the information cost `c(θ) = λ·θ²` (a stand-in for `λ·KL`).
+and the `Attention` leaf — a `MeanPreservingSpreadStage` choosing the continuous
+dispersion θ ∈ [0, θ_max] of next-period wealth at the information cost
+`c(θ) = λ·θ²` (a stand-in for `λ·KL`).
 """
 function mw_household(p = mw_params)
     layout = GriddedLayout(
@@ -120,16 +120,15 @@ function mw_household(p = mw_params)
     # Aggregate z scales the wage: good aggregate times raise labor income.
     receipt  = WealthChangeStage(layout;          # defaults: (; axis = :wealth)
         wealth_post = (; wealth, income, z, env) -> (1 + env.r) * wealth + env.w * z * income)
-    savings  = ConsumptionSavingsStage(layout;    # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings  = ConsumptionSavingsStage(layout;    # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
-    attention = ScaleVarianceStage(layout; axis = :wealth,
-        dispersions = p.dispersions, shocks = p.shocks, weights = p.weights,
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
+    attention = MeanPreservingSpreadStage(layout; axis = :wealth, θ_max = p.θ_max,
         cost = (θ; env) -> env.λ * θ^2)           # λ·θ² — stand-in for λ·KL(θ)
 
     hh = aggshock ∘ incshock ∘ receipt ∘ savings ∘ attention
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))
 end
 
-"The `Attention` (`ScaleVarianceStage`) leaf — its seated `policy` is θ*(x), the chosen dispersion."
+"The `Attention` (`MeanPreservingSpreadStage`) leaf — its seated `policy` is θ*(x), the chosen dispersion."
 mw_attention_stage(hh) = hh.buffer.stages[end]

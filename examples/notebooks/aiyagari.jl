@@ -48,9 +48,9 @@ function aiyagari_household(p::AiyagariParams)
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = IncomeStage(layout)               # (1+r)·wealth + w·income, the standard receipt
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
     return define_moments!(shock ∘ receipt ∘ savings;
         K_supplied = at_end(integrand = :wealth, reduce = sum),
@@ -77,7 +77,7 @@ p = AiyagariParams()
 # touch them directly.
 
 hh   = aiyagari_household(p)
-dims = layout_size(input_layout(hh))
+dims = layout_size(start_layout(hh))
 
 @printf "Layout: wealth %d × income %d = %d cells\n" dims[1] dims[2] prod(dims)
 

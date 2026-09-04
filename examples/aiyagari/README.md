@@ -40,7 +40,6 @@ function aiyagari_household(p = AiyagariParams())
         β               = p.β,
         utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
 
     hh = shock ∘ receipt ∘ savings

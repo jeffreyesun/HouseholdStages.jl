@@ -1,13 +1,4 @@
-# Sector switching — domain-named sugar over LogitChoiceStage (transition-cost
-# logit on a sector/occupation axis). Same mechanics as MigrationStage, a
-# different name; a thin wrapper to show how cheaply the primitive specialises.
-
-"""
-Sector-switching stage — a [`LogitChoiceStage`](@ref) on a sector (or
-occupation) axis: agents pay `switching_cost[i, j]` to move from sector `i`
-to `j` (zero diagonal = free to stay). Same mechanics as
-[`MigrationStage`](@ref); sector-specific values (and any destination amenity)
-enter through `V_end` via composed `UtilityStage`s.
-"""
-SectorSwitchingStage(layout::GriddedLayout; axis::Symbol=:sector, switching_cost, ε=1.0) =
-    LogitChoiceStage(layout; axis=axis, cost_matrix=switching_cost, ε=ε)
+"""Sector or occupation switching — a [`LogitChoiceStage`](@ref) charging `switching_cost[i, j]` to move `i → j`."""
+SectorSwitchingStage(start_layout::GriddedLayout, end_layout::GriddedLayout = start_layout;
+                     axis::Symbol=:sector, switching_cost, ε=1.0) =
+    LogitChoiceStage(start_layout, end_layout; axis=axis, cost_matrix=switching_cost, ε=ε)

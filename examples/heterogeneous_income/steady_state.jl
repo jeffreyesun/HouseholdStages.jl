@@ -31,7 +31,7 @@ function hip_steady_state(p = hip_params; verbosity = 1)
     # Per-type wealth decomposition from the stationary Λ #
     #----------------------------------------------------#
     # Λ is shaped (N_w, n_ε, n_θ); the :income_type axis is position 3.
-    out_layout = hh.buffer.output_layout
+    out_layout = end_layout(hh)
     cells = cell_array(out_layout)
     nθ = length(p.θ_grid)
 

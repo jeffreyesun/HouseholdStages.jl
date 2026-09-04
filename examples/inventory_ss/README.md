@@ -59,7 +59,7 @@ Three load-bearing decompositions:
   (keep the post-depletion stock, free), `−(F + c·(grid[i'] − grid[s]))` above it (reorder up: fixed
   cost plus per-unit purchase), `−Inf` below it (reducing the stock is infeasible). A plain `Matrix`
   is the normal `ArgmaxStage` reward parameterization. The fixed cost makes the reward
-  non-supermodular, so the stage uses `search = :brute`. The inventory axis is **discrete** so "keep"
+  non-supermodular (a monotone solve would not apply; the argmax is brute). The inventory axis is **discrete** so "keep"
   (`i' = s`) is an exact grid point.
 
 ## What is the outer loop (the caller's, never the block)

@@ -29,7 +29,7 @@ function investment_risk_solve(p = investment_risk_params; Δ = p.Δ)
     m   = compute_moments(hh, res.Λ, env)
 
     θ        = HouseholdStages.policy(investment_risk_stage(hh))   # θ*(x), shape (N_w, N_income)
-    w_vals   = getfield.(cell_array(output_layout(hh)), :wealth)
+    w_vals   = getfield.(cell_array(end_layout(hh)), :wealth)
     mass     = sum(res.Λ)
     θ_grid   = sum(θ) / length(θ)                                  # grid-mean share (portfolio convention)
     θ_wtd    = sum(θ .* res.Λ) / mass                              # wealth-weighted aggregate share

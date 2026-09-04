@@ -92,7 +92,7 @@ function collective_household(p = collective_params)
         β       = p.β,
         # Collective felicity: Pareto-weighted sum of the two members'
         # utilities over their shares of the common consumption c.
-        utility = (cell, c; env) ->
+        utility = (cell, c) ->
             p.μ * u_crra(p.s * c, Val(p.σ_A)) +
             (1 - p.μ) * u_crra((1 - p.s) * c, Val(p.σ_B)),
     )

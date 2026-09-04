@@ -20,7 +20,7 @@ part_reward = [ 0.0    0.0;          # row 1 = not-work: reward 0
                -vbar  -vbar]         # row 2 = work:     reward −v(n̄)   (columns identical)
 
 shock   = MarkovStage(layout; axis = :income, transition_matrix = P_y)
-choose  = ArgmaxStage(layout; axis = :participation, reward = part_reward, search = :brute)
+choose  = ArgmaxStage(layout; axis = :participation, reward = part_reward)
 budget  = WealthChangeStage(layout; axis = :wealth,            # cash = (1+r)b + w·ε·n̄·1{work}
     wealth_post = (; wealth, income, participation, env) ->
         (1 + env.r) * wealth + env.w * income * nbar * participation)

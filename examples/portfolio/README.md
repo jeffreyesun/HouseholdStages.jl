@@ -18,12 +18,15 @@ IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Portfolio
 | `IncomeShock` | `MarkovStage` | draw next income on the `:income` axis |
 | `Receipt` | `WealthChangeStage` | `a ↦ a + w·y` (cash-on-hand) |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | pick next financial wealth `b'`, `c = x − b'`, CRRA utility |
-| `Portfolio` | `MeanVarianceStage` | pick risky share `θ`; next wealth `b'·(R_f + θ·(R_k − R_f))` |
+| `Portfolio` | `GaussianLoadingStage` | pick the continuous risky share `θ ∈ [0, 1]`; next wealth `b'·(R_f + θ·(μ_x + σ_x·Z))` |
 
-`MeanVarianceStage` is the streaming portfolio primitive (`O(n_w)`, no share-axis): it streams the
-candidate shares, seats the per-cell optimal `θ*(x)`, and pushes mass through the chosen return
-distribution. Higher `θ` raises both the mean and variance of next wealth, so a risk-averse CRRA
-agent picks an **interior** share — exactly the mean–variance tradeoff.
+`GaussianLoadingStage` — here in its canonical portfolio reading (anchor = `R_f`, increment = the
+excess return) — is the streaming portfolio primitive (`O(n_w)`, no share-axis): it solves the
+continuous share choice per cell (scan + Newton), seats the per-cell optimal `θ*(x)`, and pushes mass
+through the chosen truncated-Gaussian return row. The excess-return moments `(μ_x, σ_x)` are
+moment-matched in `model.jl` to the calibration's two-point lottery `(R_risky, p_risky)`. Higher `θ`
+raises both the mean and variance of next wealth, so a risk-averse CRRA agent picks an **interior**
+share — exactly the mean–variance tradeoff.
 
 ## Equilibrium
 
@@ -39,4 +42,6 @@ julia --project=. examples/portfolio/steady_state.jl
 
 Reports mass conservation, mean wealth, and the risky-share policy range. With the default
 calibration (`σ = 3`, 3% premium) the poorest, borrowing-constrained agents go all-risky (little to
-lose) while the wealthy hold a smaller share — the standard risk-aversion gradient.
+lose) while the wealthy hold a smaller interior share (≈ 0.6 at the top of the distribution) — the
+standard risk-aversion gradient. (The two grid endpoints read `θ* = 0` by convention/artifact: the
+`w = 0` cell has nothing at stake, and at `w_max` the clamped up-landing leaves risk with no upside.)

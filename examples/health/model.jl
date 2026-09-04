@@ -26,7 +26,7 @@
 #       `(; health) -> [survival(health) 1−survival(health); 0 1]`. Healthier
 #       agents survive with higher probability; the dead state is ABSORBING. On
 #       the alive sub-mass the rows sum to `survival(health) < 1` — the
-#       sub-stochastic survival the spec calls for — while total mass on the full
+#       sub-stochastic survival the model calls for — while total mass on the full
 #       `(health, alive)` grid is conserved (it accumulates in the absorbing dead
 #       state). The survival probability is a plain economic primitive (a logistic
 #       in health) assembled into a matrix and handed to the EXISTING `MarkovStage`:
@@ -54,7 +54,7 @@
 # `Q = a·i^γ`-style, so to deliver gross investment `i` at medical efficiency `a`
 # costs `effort_cost(i; env) = env.R · (i / env.a)^{1/γ}` (convex for `γ ∈ (0,1)`,
 # exponent `1/γ > 1`). The reward `production(h) − effort_cost(h' − (1−δ)h)` is then
-# supermodular in `(h', h)`, so `CapitalInvestmentStage`'s `:divide_conquer` monotone solve
+# supermodular in `(h', h)`, so `CapitalInvestmentStage`'s divide-and-conquer monotone solve
 # is valid. Higher efficiency `a` lowers the cost — the engine of the health profile.
 
 using HouseholdStages
@@ -127,7 +127,6 @@ function health_household(p = health_params)
         depreciation    = p.δ,
         production      = (h; env) -> env.R * h,
         effort_cost     = (i; env) -> i <= 0 ? 0.0 : env.R * (i / env.a)^(1 / p.γ))
-        # defaults: (; monotone_search = :divide_conquer, assume_monotone = false)
 
     # Health-dependent survival as a 2×2 ROW-stochastic matrix per health value;
     # dead is absorbing. `(; health)` receives the :health axis VALUE (see

@@ -27,7 +27,7 @@ continuation `V_end[unemp]` is flat, so the quit index flips below a reservation
 `∘` runs the LEFT stage FIRST in time order:
 
 ```
-QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Matching
+QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Separation ∘ Matching
 ```
 
 | stage         | library stage                              | role |
@@ -36,13 +36,19 @@ QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Matching
 | `FlowUtility` | `UtilityStage`                             | `u(w·z)` employed (wage rises in `z`), `u(b_u)` unemployed |
 | `Discount`    | `TimeDiscountingStage(β)`                  | `V_start = β·V_end` |
 | `ZShock`      | `MarkovStage(axis = :z)`                   | persistent match-productivity chain (Rouwenhorst AR(1)) |
-| `Matching`    | `SearchMatchingStage(axis = :emp)`         | unemployed search (effort, cost, job-finding at fixed `θ`); employed separate exogenously at `δ` |
+| `Separation`  | `MarkovStage(axis = :emp)`, via `SearchMatchingStage` | exogenous separation at `δ` (`[1 0; δ 1−δ]`), BEFORE matching — the separated search the same period |
+| `Matching`    | `MixingStage(axis = :emp)`, via `SearchMatchingStage` | unemployed choose their job-finding probability `p` — the lottery over "success" (`[0 1; 0 1]`) and "fail" (identity) kernels — at convex utils cost `c(p) = κ_s·((1−p)log(1−p) + p)`, `κ_s = χ/(A_match·θ)` at fixed `θ` (passed as the scalar `tightness`) |
 
-The transition matrix `T_z`, the `z` level grid, and the gated reward matrix are
-plain economic DATA built by helper functions (`rouwenhorst`, `z_process`) — exactly
-the intended division of labor (data feeds existing stages; no new stage). The search
-effort grid, effort-cost, and job-finding closures are fed to the existing
-`SearchMatchingStage`.
+The last two rows ship as **one library call**: `SearchMatchingStage` (derived
+sugar) expands to exactly `MarkovStage(separation) ∘ MixingStage(job-search lottery)`;
+chains flatten, so the chain leaves are unchanged, and the probability-space
+cost/policy Fenchel pair is single-homed in the package
+(`src/stages/derived/search_matching.jl`) rather than rolled here. The transition
+matrix `T_z`, the `z` level grid, and the gated reward matrix are plain economic
+DATA built by helper functions (`rouwenhorst`, `z_process`) — exactly the intended
+division of labor (data feeds existing stages; no new stage). **Timing:** separation
+runs before matching, so a worker who separates this period searches in the same
+period rather than waiting one period out.
 
 This example PAIRS with `examples/mccall_search`: both use the same gated
 `ArgmaxStage(:emp)` `-Inf` trick with a spectator axis driving a threshold, in
@@ -57,8 +63,8 @@ employed worker's optimal quit threshold, layered on a search-matching inflow an
 exogenous separation rate. Two deliberate stylizations: (i) market tightness `θ` is
 FIXED (partial equilibrium — no free-entry / vacancy-posting block, unlike
 `examples/search_matching`); (ii) new hires inherit their current `z` cell rather than
-drawing from a hiring distribution, since `SearchMatchingStage` operates only on the
-`:emp` axis (`z` rides along as a spectator). Both are clean stylizations, not
+drawing from a hiring distribution, since the matching `MixingStage` operates only on
+the `:emp` axis (`z` rides along as a spectator). Both are clean stylizations, not
 workarounds — the quit mechanism itself is exact.
 
 ## Status
@@ -68,12 +74,13 @@ Solves cleanly. With the default calibration (`β = 0.96`, `σ = 2`, `w = 1`,
 `ρ = 0.90`, `σ = 0.20`, normalized to `E[z] = 1`):
 
 - `ΣΛ = 1.000000` (mass conserved)
-- employment ≈ 0.648
+- employment ≈ 0.696 (the separated search within the period, so the unemployment
+  pool drains fast relative to the total separation flow)
 - exogenous separation `δ = 0.050`; endogenous quit rate ≈ 0.045
 - **total separation rate ≈ 0.093** (= δ + (1−quit)·... composition of both margins)
 - quit threshold: employed quit at the two lowest `z` (`z ≲ 0.57`); reservation
   productivity is interior
-- mean `z` among the employed ≈ 1.20 > unconditional `E[z] = 1.00` (positive
+- mean `z` among the employed ≈ 1.19 > unconditional `E[z] = 1.00` (positive
   selection — quits prune low-productivity matches)
 - quit policy verified to be a low-`z` prefix (monotone)
 

@@ -113,14 +113,14 @@ function durable_liquid_household(p = durable_liquid_params)
     shock   = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(block; axis = :liquid,                               # cash on hand
         wealth_post = (; liquid, income) -> (1 + p.r_b) * liquid + p.w * income)
-    choose  = ArgmaxStage(full; axis = :durable_choice, reward = zeros(N_d, 1))      # grows 1 → N_d
+    choose  = ArgmaxStage(block, full; axis = :durable_choice, reward = zeros(N_d, 1)) # grows 1 → N_d
     debit   = WealthChangeStage(full; axis = :liquid,                                # b ↦ max(b − outlay(d',d), ε)
         wealth_post = (; durable_choice, durable, liquid) -> max(liquid - outlay(durable_choice, durable), p.ε))
     setdur  = WealthChangeStage(full; axis = :durable,                               # d ↦ d'
         wealth_post = (; durable_choice) -> p.d_sizes[Int(durable_choice)])
     forget  = ForgetfulSumStage(full; axis = :durable_choice)
     savings = ConsumptionSavingsStage(block; β = p.β, axis = :liquid,                # c = b_post − b'
-        utility = (cell, c; env) -> u_durable(c, cell.durable, p),
+        utility = (cell, c) -> u_durable(c, cell.durable, p),
         utility_axes = (:durable,))
 
     hh = depreciate ∘ shock ∘ receipt ∘ choose ∘ debit ∘ setdur ∘ forget ∘ savings

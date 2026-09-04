@@ -29,10 +29,10 @@
 #                   The persistent return heterogeneity is carried HERE.
 #
 # KEY DESIGN DECISION — why the return rides a `WealthChangeStage`, not
-# `MeanVarianceStage`. The natural portfolio primitive `MeanVarianceStage`
-# takes a PLAIN return vector (`risky_returns`, `risk_free`) — it cannot vary
-# the mean return by a persistent `:rtype` axis, because those returns are
-# scalars/vectors fixed across cells. Fagereng's contribution is precisely
+# `GaussianLoadingStage`. The natural portfolio primitive `GaussianLoadingStage`
+# takes PLAIN return moments (`anchor`/`increment_mean`/`increment_sd`) — it
+# cannot vary the mean return by a persistent `:rtype` axis, because those
+# moments are scalars (or `FromEnv`) fixed across cells. Fagereng's contribution is precisely
 # heterogeneity in the MEAN return across people, so the return must read the
 # `:rtype` axis. A `WealthChangeStage` does exactly that: its `wealth_post`
 # closure reads any layout axis, so `b' ↦ R(rtype)·b'` carries the per-type
@@ -41,7 +41,7 @@
 # heterogeneous and homogeneous-baseline calibrations are a pure `env` swap —
 # the household block is identical for both.
 #
-# We deliberately omit a `MeanVarianceStage` portfolio leg: a homogeneous
+# We deliberately omit a `GaussianLoadingStage` portfolio leg: a homogeneous
 # risky-share choice composes cleanly on top (see `examples/portfolio`), but
 # it would add an idiosyncratic-risk margin that is NOT the Fagereng
 # mechanism. The mean-return heterogeneity is the model's contribution, and
@@ -113,7 +113,7 @@ function fagereng_household(p = fagereng_params)
         wealth_post = (; wealth, income, env) -> wealth + env.w * income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
     # Type-specific gross return on saved wealth: b' ↦ R(rtype)·b'. The closure
     # reads the persistent :rtype axis (the grid value 1.0/2.0 is the type
     # label) and looks up that type's return in env.R_by_type.

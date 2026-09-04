@@ -4,23 +4,42 @@
 
 # A Mortensen–Pissarides / McCall income-fluctuation problem built ENTIRELY from
 # existing HouseholdStages library stages — no bespoke household stage. The
-# within-period problem decomposes into three stages, in time order:
+# within-period problem decomposes into four stages, in time order:
 #
-#     SearchMatchingStage ∘ IncomeReceipt ∘ ConsumptionSavingsStage
+#     Separation ∘ Matching ∘ IncomeReceipt ∘ ConsumptionSavingsStage
 #
-# - `SearchMatchingStage` (the dedicated effort-max + θ-dependent matching stage):
-#   the unemployed choose search effort `e`; effort costs `cost(e)` utils and finds
-#   a job with probability `job_finding(e, θ)` set by the matching function. The
-#   employed separate at rate `δ`. Market tightness `θ` rides the `FromEnv(:θ)`
-#   contract — exogenous in partial equilibrium, or closed by free entry in the
-#   driver (`steady_state.jl`). The effort cost is a UTILITY cost (subtracted in the
-#   value recursion), as in McCall search — it is not a resource drain on the budget.
+# The `Separation ∘ Matching` pair ships as ONE library call: `SearchMatchingStage`
+# (derived sugar) expands to exactly
+# `MarkovStage(separation) ∘ MixingStage(job-search lottery)`;
+# chains flatten, so the chain leaves are unchanged. The convex probability-space cost
+# `c(p) = κ_s·((1−p)log(1−p) + p)`, its closed-form argmax `p*(y) = 1 − exp(−y/κ_s)`,
+# and the calibration bridge `κ_s = χ/(A_match·θ)` are built into the sugar
+# (single-homed in `src/stages/derived/search_matching.jl`) — no local cost/policy
+# closures are rolled here.
+#
+# - `Separation` (`MarkovStage` on `:emp`): the employed lose their job w.p. `δ`
+#   (transition `[1 0; δ 1−δ]`). TIMING: separation runs FIRST, so a worker
+#   separated this period searches in the same period — job loss and the search
+#   response are not staggered across periods.
+# - `Matching` (`MixingStage` on `:emp`): the unemployed CHOOSE their job-finding
+#   probability `p ∈ [0, 1]` directly — the lottery over `K_A` = "search succeeds"
+#   (`[0 1; 0 1]`) and `K_B` = "search fails" (identity). The employed rows of the
+#   two kernels coincide, so the employed choice is degenerate (`p* = 0`, cost 0).
+#   The scale `κ_s = χ/(A_match·θ)` carries the tightness
+#   externality: `c′(p) = χ·e(p)`, where `e(p) = −log(1−p)/(A·θ)` is the effort the
+#   matching technology `p = 1 − exp(−A·e·θ)` requires to reach `p`, so the marginal
+#   probability cost equals the marginal effort disutility `χ·e` at the implied
+#   effort — higher tightness ⇒ cheaper search ⇒ higher employment.
+#   The cost is a UTILITY cost (subtracted in the value recursion), as in McCall
+#   search — not a resource drain on the budget. Tightness `θ` rides `env` (the
+#   sugar's default) — exogenous in partial equilibrium, or closed by free entry
+#   in the driver (`steady_state.jl`).
 # - `IncomeReceipt` (`WealthChangeStage`): `b ↦ (1+r) b + income(emp)`, where the
 #   employed earn wage `w` and the unemployed earn benefit `b_u`.
 # - `ConsumptionSavingsStage`: pick `b_end` on the wealth grid; implicit budget
 #   `c = b_in − b_end`; CRRA utility.
 #
-# The matching externality (the whole point): the job-finding rate every worker
+# The matching externality (the whole point): the job-finding cost every worker
 # faces depends on aggregate tightness θ, which in GE is pinned by firms' free-entry
 # vacancy posting (a purely outer-loop, firm-side condition — see steady_state.jl).
 #
@@ -29,7 +48,8 @@
 # embedding follows Krusell, Mukoyama & Şahin (2010, ReStud) on search + savings.
 #
 # Library stages used (NO bespoke household stage):
-#   SearchMatchingStage, WealthChangeStage, ConsumptionSavingsStage.
+#   SearchMatchingStage (derived sugar = MarkovStage ∘ MixingStage), WealthChangeStage,
+#   ConsumptionSavingsStage.
 
 using HouseholdStages
 
@@ -45,9 +65,9 @@ using HouseholdStages
     b_u :: Float64 = 0.4           # unemployment benefit (income when unemployed)
     δ   :: Float64 = 0.10          # job-separation rate
 
-    # Search effort + matching primitives.
-    efforts :: Vector{Float64} = collect(range(0.0, 3.0; length = 12))
-    χ       :: Float64 = 0.5       # effort-cost scale: cost(e) = χ·e²/2
+    # Search-cost + matching primitives: κ_s(θ) = χ/(A_match·θ) scales the
+    # probability-space search cost c(p) = κ_s·((1−p)log(1−p) + p).
+    χ       :: Float64 = 0.5       # search-cost scale (effort disutility χ·e²/2)
     A_match :: Float64 = 0.5       # matching efficiency in p(e, θ) = 1 − exp(−A·e·θ)
 
     # Firm side (used only by the free-entry GE driver; pure outer-loop arithmetic).
@@ -69,30 +89,16 @@ const search_matching_params = SearchMatchingParams()
 # Utility: CRRA felicity `u_crra` is provided by HouseholdStages.
 
 
-# Search + matching primitives (plain functions) #
-#------------------------------------------------#
-
-"""
-Search-effort utility cost `cost(e) = χ·e²/2` (a convex disutility, McCall-style).
-"""
-effort_cost(e, p = search_matching_params) = 0.5 * p.χ * e^2
-
-"""
-Job-finding probability `p(e, θ) = 1 − exp(−A·e·θ)`, increasing in own effort `e`
-and in market tightness `θ`, bounded in `[0, 1)`. This is the channel through which
-the tightness externality enters the worker's problem.
-"""
-job_finding(e, θ, p = search_matching_params) = 1 - exp(-p.A_match * e * θ)
-
-
 # Household chain assembly #
 #--------------------------#
 
 """
 Build the moment-attached search-and-matching household block
-`SearchMatchingStage ∘ IncomeReceipt ∘ ConsumptionSavingsStage`, with the
+`Separation ∘ Matching ∘ IncomeReceipt ∘ ConsumptionSavingsStage`, with the
 employment rate and mean wealth attached as moments. The labor axis `:emp` has
-level 1 = unemployed, 2 = employed; tightness `θ` is read from `env`.
+level 1 = unemployed, 2 = employed; tightness `θ` is read from `env` (the
+`SearchMatchingStage` sugar's default), so the same block serves PE at fixed `θ`
+and the free-entry GE loop.
 """
 function search_matching_household(p = search_matching_params)
     layout = GriddedLayout(
@@ -100,11 +106,10 @@ function search_matching_household(p = search_matching_params)
         :emp => Discrete([:unemp, :emp]),   # 1 = unemployed, 2 = employed
     )
 
-    matching = SearchMatchingStage(layout;   # defaults: (; axis = :emp, tightness = FromEnv(:θ))
-        efforts     = p.efforts,
-        cost        = e -> effort_cost(e, p),
-        job_finding = (e, θ) -> job_finding(e, θ, p),
-        separation  = p.δ,
+    search_and_match = SearchMatchingStage(layout;   # Separation ∘ Matching (derived sugar):
+        separation          = p.δ,                   #   the separated search this same period;
+        effort_cost_scale   = p.χ,                   #   tightness defaults to reading env.θ
+        matching_efficiency = p.A_match,
     )
 
     receipt = WealthChangeStage(layout;      # defaults: (; axis = :wealth)
@@ -112,12 +117,12 @@ function search_matching_household(p = search_matching_params)
                                      (emp == :emp ? env.w : env.b_u),
     )
 
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
-    hh = matching ∘ receipt ∘ savings
+    hh = search_and_match ∘ receipt ∘ savings        # chains flatten: 4 leaves
     return define_moments!(hh;
         employment   = at_end(integrand = (; emp) -> emp == :emp ? 1.0 : 0.0,
                               reduce = sum),

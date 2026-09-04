@@ -39,7 +39,7 @@ function health_life_cycle(p = health_params; verbosity = 1)
     hh      = health_household(p)
     h_axis  = GriddedContinuous(p.h_min, p.h_max, p.N_h)
     h_grid  = collect(Float64, axisvalues(h_axis))
-    cells   = cell_array(output_layout(hh))                 # (N_h, 2) cells: (:health, :alive)
+    cells   = cell_array(end_layout(hh))                 # (N_h, 2) cells: (:health, :alive)
 
     env_at(t) = (; R = p.R, a = efficiency_at_age(t, p))
 

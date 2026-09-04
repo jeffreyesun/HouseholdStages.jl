@@ -56,8 +56,8 @@ using HouseholdStages
                                                   #   illiquid stock grid-INTERIOR (not pinned at a_max)
     κ    :: Float64 = 0.08                        # convex adjustment cost χ(d) = κ·d²  (utility units)
     ε    :: Float64 = 1e-3                         # subsistence consumption floor (keeps every cell feasible:
-                                                  #   the brute ArgmaxStage rebalance requires a finite action
-                                                  #   at every cell, incl. the constrained grid bottom)
+                                                  #   an all-infeasible cell would carry V = −Inf, incl. the
+                                                  #   constrained grid bottom)
     w    :: Float64 = 1.0
     y_grid :: Vector{Float64} = [0.7, 1.3]
     P_y    :: Matrix{Float64} = [0.8 0.2; 0.2 0.8]
@@ -65,8 +65,8 @@ using HouseholdStages
     W_min :: Float64 = 0.1                         # grid bottom > 0: post-return W = (1+r_b)(W−a)+(1+r_a)a+w·y
                                                   #   is always > 0, so the empty-budget corner W=0 is never
                                                   #   visited; keeping it off-grid guarantees a feasible
-                                                  #   consume (a'=0) at every backward cell (ArgmaxStage
-                                                  #   requires every cell to have a finite action).
+                                                  #   consume (a'=0) at every backward cell (an all-infeasible
+                                                  #   cell would carry V = −Inf).
     W_max :: Float64 = 32.0                       # portfolio-value grid top (must cover W = b + a)
     N_a  :: Int = 12
     a_max :: Float64 = 16.0
@@ -109,13 +109,12 @@ function two_asset_pv_household(p = TwoAssetPvParams())
     rebalance = ArgmaxStage(layout; axis = :illiquid,
         reward = [-χ(agrid[ap] - agrid[a]) for ap in 1:p.N_a, a in 1:p.N_a])   # M[after=a', before=a]
 
-    # Consume. Argmax (monotone) on :wealth choosing W'; c = W − W', utility u(c), with the liquid
+    # Consume. Argmax on :wealth choosing W'; c = W − W', utility u(c), with the liquid
     # constraint W' ≥ a (liquid = W' − a ≥ 0) masking W' < a as −Inf. The reward depends on illiquid.
     # Discount is its own composed stage (end-goal §1): the argmax solves `max(reward + V_end)`, the
     # `TimeDiscountingStage` supplies `β·V_end` first in the backward sweep (`∘` is time-ordered).
-    consume = ArgmaxStage(layout; axis = :wealth,
-        reward = _PvConsumeReward(Wgrid, p),
-        search = :divide_conquer, assume_monotone = true) ∘ TimeDiscountingStage(layout; β = p.β)
+    consume = ArgmaxStage(layout; axis = :wealth, reward = _PvConsumeReward(Wgrid, p)) ∘
+              TimeDiscountingStage(layout; β = p.β)
 
     hh = shock ∘ returnsW ∘ returnsA ∘ rebalance ∘ consume
     return define_moments!(hh;

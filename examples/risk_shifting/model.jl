@@ -23,16 +23,20 @@
 # `Savings`          — `ConsumptionSavingsStage` picks the stake `a'` carried
 #                      into the project on the wealth grid; `c = x − a'` (CRRA).
 #                      The grid floor `a' ≥ a_min` is the borrowing constraint.
-# `Gamble`           — `MeanVarianceStage` on the wealth axis: the entrepreneur
-#                      picks project risk `θ ∈ shares`, so the stake becomes
-#                      `a'·(R_f + θ·(R_k − R_f))` for the two-point project
-#                      return `R_k` (succeed / fail). The risky leg is
-#                      calibrated MEAN-NEUTRAL (`E[R_k] ≈ R_f`), so a return
-#                      premium does NOT drive gambling — only the value-
-#                      function convexity does. This is the pure V–H mechanism:
-#                      risk-shifting via VARIANCE choice. NO skewness primitive
-#                      is needed — the right-tail emphasis emerges ENDOGENOUSLY
-#                      from the limited-liability floor below.
+# `Gamble`           — `GaussianLoadingStage` on the wealth axis (the portfolio
+#                      stage read as a project-risk dial: anchor = R_f,
+#                      increment = the project's excess payoff): the entrepreneur
+#                      picks project risk `θ ∈ [0, 1]` CONTINUOUSLY, so the
+#                      stake becomes `a'·(R_f + θ·(μ_x + σ_x·Z))` for a
+#                      truncated-Gaussian excess return moment-matched to the
+#                      two-point succeed/fail project — the Gaussian carries
+#                      that project through its first two moments
+#                      (μ_x = 0.02, σ_x = 0.59). The V–H mechanism does not
+#                      live in the bet's SHAPE: `θ` is a VARIANCE dial pulled at
+#                      a convex region of V, the risky leg is essentially
+#                      MEAN-NEUTRAL, and the right-tail emphasis emerges
+#                      ENDOGENOUSLY from the limited-liability floor below — so
+#                      no skewness primitive is needed.
 # `LimitedLiability` — `WealthChangeStage` `a ↦ max(z·a, a_floor)`: limited
 #                      liability / the occupational outside option. A failed
 #                      gamble cannot push the entrepreneur below `a_floor` (the
@@ -46,12 +50,10 @@
 #
 # Why no occupation axis / no separate `max(V_continue, W)` stage. The V–H
 # floor is a floor on REALIZED WEALTH (limited liability), and a wealth-floor
-# `WealthChangeStage` states it directly and library-only. A literal occupation
-# axis carrying a flat worker value `W` would need the savings stage to run on
-# the entrepreneur leg only — per-axis gating the library deliberately does not
-# offer without a bespoke kernel. The wealth-floor formulation is the faithful,
-# gating-free statement of the same convexity (V–H §II: the outside option is a
-# lower bound on the continuation; here, a lower bound on the carried collateral).
+# `WealthChangeStage` states it directly and library-only — the faithful
+# statement of the same convexity (V–H §II: the outside option is a lower bound
+# on the continuation; here, a lower bound on the carried collateral), with no
+# occupation axis to carry.
 #
 # Returns and `z` are exogenous (partial equilibrium): there is no market to
 # clear, so the "outer loop" is a single `solve_steady_state_given_env!`.
@@ -70,14 +72,14 @@ using HouseholdStages
     z_grid :: Vector{Float64} = [0.98, 1.02]
     P_z    :: Matrix{Float64} = [0.85 0.15;
                                  0.30 0.70]
-    # Two-point project (succeed / fail) on the risky leg, calibrated nearly
-    # MEAN-NEUTRAL vs the safe return (E[R_k] = 0.4·1.8 + 0.6·0.6 = 1.08 ≈ R_f):
-    # gambling is driven by CONVEXITY, not a return premium — the pure V–H bet.
+    # Succeed/fail project calibration on the risky leg, nearly MEAN-NEUTRAL vs
+    # the safe return (E[R_k] = 0.4·1.8 + 0.6·0.6 = 1.08 ≈ R_f): gambling is
+    # driven by CONVEXITY, not a return premium — the pure V–H bet. Feeds the
+    # moment-matched Gaussian excess (μ_x = 0.02, σ_x = 0.59) below.
     R_f    :: Float64 = 1.06                        # gross return of the safe (θ = 0) project
     R_up   :: Float64 = 1.80                        # success multiple
     R_dn   :: Float64 = 0.60                        # failure multiple
     p_up   :: Float64 = 0.40                        # success probability
-    shares :: Vector{Float64} = collect(range(0.0, 1.0; length = 11))   # project-risk intensity θ
     a_floor :: Float64 = 0.50                       # limited-liability wealth floor (the V–H outside option)
     N_a   :: Int       = 200
     a_min :: Float64   = 0.0
@@ -115,20 +117,19 @@ function risk_shifting_household(p = risk_shifting_params)
     # Choose the stake a' carried into the project (consumption-savings).
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)))
-        # defaults: (; axis = :wealth, monotone_search = :divide_conquer, assume_monotone = false, utility_axes = nothing)
+        utility         = (cell, c) -> u_crra(c, Val(p.σ)))
+        # defaults: (; axis = :wealth, skip_monotonicity_check = false, utility_axes = nothing)
 
-    # The two-point project gamble: stake a' → a'·(R_f + θ·(R_k − R_f)), with the
-    # risky leg the (succeed, fail) pair. Mean-neutral ⇒ convexity drives θ.
-    gamble = MeanVarianceStage(layout;                                   # defaults: (; axis = :wealth, cost = (θ; env) -> 0.0)
-        shares        = p.shares,
-        risk_free     = p.R_f,
-        risky_returns = [p.R_up, p.R_dn],
-        probs         = [p.p_up, 1 - p.p_up])
+    # The project gamble: stake a' → a'·(R_f + θ·(μ_x + σ_x·Z)), the Gaussian
+    # excess moment-matched to the (succeed, fail) pair {R_up − R_f w.p. p_up,
+    # R_dn − R_f}. Mean-neutral ⇒ convexity drives θ.
+    μx = p.p_up * (p.R_up - p.R_f) + (1 - p.p_up) * (p.R_dn - p.R_f)     # 0.02
+    σx = sqrt(p.p_up * (1 - p.p_up)) * abs(p.R_up - p.R_dn)              # 0.59
+    gamble = GaussianLoadingStage(layout;                                   # defaults: (; axis = :wealth, loading_bounds = (0.0, 1.0), cost = (θ; env) -> 0.0)
+        anchor = p.R_f, increment_mean = μx, increment_sd = σx)
 
     # Limited liability / outside option: a failed gamble cannot drop wealth
-    # below a_floor. This floor convexifies V just above a_floor — the engine of
-    # risk-shifting. z scales realized wealth (productivity compounds).
+    # below a_floor. z also scales realized wealth, so productivity compounds.
     liability = WealthChangeStage(layout;                               # defaults: (; axis = :wealth)
         wealth_post = (; z, wealth, env) -> max(z * wealth, env.a_floor))
 
@@ -136,8 +137,8 @@ function risk_shifting_household(p = risk_shifting_params)
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))
 end
 
-"The `MeanVarianceStage` leaf — its seated `policy` is the project-risk choice `θ*(x)`.
-(Index 5, not 4: the upstream `ConsumptionSavingsStage` now expands to `argmax ∘ TimeDiscounting`,
+"The `GaussianLoadingStage` leaf — its seated `policy` is the project-risk choice `θ*(x)`.
+(Index 5, not 4: the upstream `ConsumptionSavingsStage` expands to `argmax ∘ TimeDiscounting`,
 inserting the discount leaf just before `gamble`.)"
 risk_shifting_gamble_stage(hh) = hh.buffer.stages[5]
 

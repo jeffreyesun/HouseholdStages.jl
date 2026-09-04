@@ -112,9 +112,7 @@ end
 Build the durable-housing block
 `Move ∘ IncomeShock ∘ BuyHome ∘ Receipt ∘ UserCost ∘ ConsumptionSavings`, with
 `mean_wealth = ∫ wealth dΛ`, `mean_house = ∫ h dΛ`, and the homeownership rate
-`own_rate = ∫ 1{h>0} dΛ` attached. An exogenous owner→renter moving shock on the
-housing axis precedes the income shock so the buy choice stays live. Six existing
-stages (one of them the moving `MarkovStage`), no bespoke household stage.
+`own_rate = ∫ 1{h>0} dΛ` attached.
 """
 function durable_housing_household(p = durable_housing_params)
     layout = GriddedLayout(
@@ -124,7 +122,7 @@ function durable_housing_household(p = durable_housing_params)
     )
 
     # Owner→renter moving shock: owners flip to the renter level (index 1) w.p.
-    # π_move each period; renters stay renters. A plain Markov on the :h axis.
+    # π_move each period; renters stay renters.
     n_h = length(p.h_sizes)
     P_h = zeros(n_h, n_h)
     P_h[1, 1] = 1.0
@@ -141,17 +139,14 @@ function durable_housing_household(p = durable_housing_params)
         wealth_post = (; wealth, h, env) -> wealth - (env.r + env.δ) * env.q * h) # defaults: (; axis = :wealth) — user cost u·h
     savings  = ConsumptionSavingsStage(layout;
         β            = p.β,
-        utility      = (cell, c; env) -> u_housing(c, cell.h, p),
+        utility      = (cell, c) -> u_housing(c, cell.h, p),
         utility_axes = (:h,),                  # flow utility reads the chosen housing size
-    ) # defaults: (; axis = :wealth, monotone_search = :divide_conquer, assume_monotone = false)
+    ) # defaults: (; axis = :wealth, skip_monotonicity_check = false)
 
-    # Timing: a moving shock may eject owners to renting; the income shock
-    # realises; the household makes its housing (buy) decision on beginning-of-
-    # period assets; then income receipt, the housing user cost, and the
-    # consumption-savings choice close the period. Buy precedes receipt so every
-    # cell entering the savings problem has had income credited — the wealth-grid
-    # floor is then strictly feasible (`c > 0`), which the gated owner branch of
-    # `BuyHomeStage` requires (a gated owner has only its own continuation).
+    # Buy precedes receipt so every cell entering the savings problem has had
+    # income credited — the wealth-grid floor is then strictly feasible (`c > 0`),
+    # which the gated owner branch of `BuyHomeStage` requires (a gated owner has
+    # only its own continuation).
     hh = move ∘ shock ∘ buy ∘ receipt ∘ usercost ∘ savings
     return define_moments!(hh;
         mean_wealth = at_end(integrand = :wealth, reduce = sum),

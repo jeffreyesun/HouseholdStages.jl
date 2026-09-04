@@ -42,7 +42,7 @@
 # the net change `k'−k`) does not, hence the choice here.
 #
 # The reward `−φ·(k' − (1−δ)k)²` is supermodular in `(k', k)` (cross-partial
-# `2φ(1−δ) ≥ 0`), so `CapitalInvestmentStage`'s `:divide_conquer` monotone solve is valid.
+# `2φ(1−δ) ≥ 0`), so `CapitalInvestmentStage`'s divide-and-conquer monotone solve is valid.
 # Prices `r` are exogenous (partial equilibrium): no market to clear, so the
 # "outer loop" is a single `solve_steady_state_given_env!` over `(k, z)`.
 
@@ -127,9 +127,8 @@ function capital_investment_household(p = capital_investment_params)
         axis         = :k,
         β            = 1 / (1 + p.r),
         depreciation = p.δ,
-        production   = (k; env) -> 0.0,                              # profit lives in the UtilityStage
-        effort_cost  = (i; env) -> p.φ * i^2)                        # convex cost on gross investment i ≥ 0
-        # defaults: (; monotone_search = :divide_conquer, assume_monotone = false)
+        production   = (k) -> 0.0,                              # profit lives in the UtilityStage
+        effort_cost  = (i) -> p.φ * i^2)                        # convex cost on gross investment i ≥ 0
 
     hh = shock ∘ profit ∘ invest
     return define_moments!(hh;

@@ -157,7 +157,7 @@ function lmt_household(p = lmt_params)
 
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth)
 
     # Readmission: an excluded household regains good standing next period w.p.

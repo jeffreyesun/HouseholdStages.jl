@@ -22,9 +22,8 @@ end
     # Argmax: env-dependent reward ⇒ cache marked env-dependent; constant ⇒ not.
     klay   = GriddedLayout(:k => GriddedContinuous([0.0, 1.0, 2.0, 3.0]))
     a_env  = ArgmaxStage(klay; reward = (; env) -> [i == j ? Float64(env.b) : -Inf for i in 1:4, j in 1:4],
-                         axis = :k, search = :brute)
-    a_cons = ArgmaxStage(klay; reward = [i == j ? 0.0 : -Inf for i in 1:4, j in 1:4],
-                         axis = :k, search = :brute)
+                         axis = :k)
+    a_cons = ArgmaxStage(klay; reward = [i == j ? 0.0 : -Inf for i in 1:4, j in 1:4], axis = :k)
     @test a_env.cache.reward_env_dep  == true
     @test a_cons.cache.reward_env_dep == false
 
@@ -34,11 +33,13 @@ end
     @test LogitChoiceStage(alay; axis = :a, cost_matrix = C, ε = FromEnv(:eps)).cache.cost_env_dep == true
     @test LogitChoiceStage(alay; axis = :a, cost_matrix = C, ε = 1.0).cache.cost_env_dep == false
 
-    # Markov: the stored `K = Tᵀ` rides a `MappedField`, opaque to `reads_env` ⇒ conservatively
-    # env-dependent even for a constant matrix (refills only ever cost a redundant fill; the
-    # `env_changed = false` skip then elides them — MappedField introspection is a P3 concern).
+    # Markov: `reads_env` sees THROUGH the `MappedField` to the transition source (Phase 0), so a
+    # CONSTANT transition matrix is env-INDEPENDENT (its `K = Tᵀ` is seated once at construction); an
+    # env-reading transition closure stays env-dependent (refilled each `backward!`).
     zlay = GriddedLayout(:z => Discrete([1, 2]))
-    @test MarkovStage(zlay; axis = :z, transition_matrix = [0.9 0.1; 0.2 0.8]).cache.transition_env_dep == true
+    @test MarkovStage(zlay; axis = :z, transition_matrix = [0.9 0.1; 0.2 0.8]).cache.transition_env_dep == false
+    @test MarkovStage(zlay; axis = :z,
+                      transition_matrix = (; env) -> [env.a (1 - env.a); 0.2 0.8]).cache.transition_env_dep == true
 end
 
 # Run a fixed-env `backward!` loop two ways and collect the full V trajectory. `skip_after_first`
@@ -58,7 +59,7 @@ end
 @testset "refill policy — fixed-env loop is bit-for-bit identical (Argmax)" begin
     klay   = GriddedLayout(:k => GriddedContinuous([0.0, 1.0, 2.0, 3.0]))
     reward = (; env) -> [i == j ? Float64(env.b) : -Inf for i in 1:4, j in 1:4]   # env-dependent field
-    mk()   = ArgmaxStage(klay; reward = reward, axis = :k, search = :brute)
+    mk()   = ArgmaxStage(klay; reward = reward, axis = :k)
 
     env = (b = 2.0,)
     V0  = Float64[0.1, 0.2, 0.3, 0.4]
@@ -68,8 +69,8 @@ end
 end
 
 @testset "refill policy — fixed-env loop is bit-for-bit identical (Logit, gains a skip)" begin
-    # Logit filled UNCONDITIONALLY before this chunk (no cache); it now GAINS the env_changed skip.
-    # This is the specific regression check that the skip is exact for the logit cost field.
+    # The logit cost field takes the `env_changed` skip like any other env-dependent field; this
+    # pins that skipping it is exact for the `ε`-baked cost.
     alay = GriddedLayout(:a => Discrete([1, 2]))
     C    = [0.0 0.5; 0.5 0.0]
     mk() = LogitChoiceStage(alay; axis = :a, cost_matrix = C, ε = FromEnv(:eps))
@@ -87,7 +88,7 @@ end
     # Proves the flag drives the refill and that a mis-primed stale field would be caught.
     klay   = GriddedLayout(:k => GriddedContinuous([0.0, 1.0, 2.0, 3.0]))
     reward = (; env) -> [i == j ? Float64(env.b) : -Inf for i in 1:4, j in 1:4]   # V_start = b .+ V_end
-    mk()   = ArgmaxStage(klay; reward = reward, axis = :k, search = :brute)
+    mk()   = ArgmaxStage(klay; reward = reward, axis = :k)
 
     A, B  = (b = 1.0,), (b = 5.0,)
     V_end = zeros(4)
@@ -104,7 +105,7 @@ end
     @test V_correct == fill(5.0, 4)     # B's reward refilled (b = 5)
     @test V_stale   == fill(1.0, 4)     # A's reward (b = 1) silently reused — the bug a stale flag causes
 
-    # And a logit stale check, since logit newly participates in the skip.
+    # The same stale check on the logit cost field.
     alay = GriddedLayout(:a => Discrete([1, 2]))
     C    = [0.0 0.5; 0.5 0.0]
     lo() = LogitChoiceStage(alay; axis = :a, cost_matrix = C, ε = FromEnv(:eps))
@@ -115,4 +116,57 @@ end
     l_stale = lo(); backward!(l_stale, Vl, (eps = 0.7,); env_changed = true)
     Vl_stale = copy(backward!(l_stale, Vl, (eps = 1.8,); env_changed = false))
     @test Vl_correct != Vl_stale
+end
+
+# A fill crosses a function barrier carrying the dep names and the source's env-dependence in the type
+# domain, so it costs its fibers and nothing per cell. The four bounds below are that property, not a
+# timing, and each guards one named mechanism of it — its threshold sits between the delivered bytes
+# and those of a mutant that removes exactly that mechanism and nothing else:
+#
+#   scalar fill      2 912 <   8 000  — `_fill_scalar_buffer!`'s `source::S` (18 912) and the scalar
+#                                       fill's two `Val`s (339 520)
+#   argmax fill     61 088 < 100 000  — `_fill_field!`'s `source::S` (157 088)
+#   CS sweep        29 272 <  57 600  — `_cs_cell`'s type-domain axis names (202 072)
+#   exit composite  80 304 < 240 000  — the `Val`-forwarding `evaluate` of `MappedField` (707 504) and
+#                                       of `ExitHazardSource` (713 904)
+
+@testset "refill — a fill allocates its fibers and nothing per cell" begin
+    n      = 100
+    layout = GriddedLayout(:wealth => GriddedContinuous(range(0.0, 4.0; length = n)), :income => Discrete([0.5, 1.5]))
+    dest   = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income
+    sf     = HouseholdStages.ScalarField(dest, layout, Float64)
+    env    = (r = 0.04, w = 1.2)
+    seat() = HouseholdStages.fill_scalar_field!(sf, dest, layout, env)
+    seat()                                              # compile before measuring
+    @test (@allocated seat()) < 8_000                   # 200 dep-combinations, compact buffer preallocated
+
+    # A bare dep closure reaches `_fill_field!` as a `Function`-typed argument, which is where the
+    # barrier's `source::S` earns its keep; `ArgmaxStage` hands `reward` to the fill verbatim.
+    nz     = 200
+    zlay   = GriddedLayout(:z => Discrete([1, 2]), :wealth => GriddedContinuous(range(0.0, 4.0; length = nz)),
+                           :income => Discrete([0.5, 1.5]))
+    am     = ArgmaxStage(zlay; axis = :z, reward = (; wealth, income, env) -> [0.0 (-wealth * env.ρ); (income - 1.0) 0.0])
+    Vz     = zeros(2, nz, 2)
+    faces() = backward!(am, Vz, (ρ = 1.0,))
+    faces()
+    @test (@allocated faces()) < 100_000                # 400 dep-combinations, one 2×2 fiber each
+
+    m      = 60
+    wlay   = GriddedLayout(:wealth => GriddedContinuous(range(0.1, 6.0; length = m)))
+    cs     = ConsumptionSavingsStage(wlay; β = 0.96, utility = (cell, c; env) -> log(c) + env.r, axis = :wealth)
+    V      = zeros(m)
+    sweep() = backward!(cs, V, (r = 0.04,))
+    sweep()
+    @test (@allocated sweep()) < 2 * sizeof(Float64) * m^2   # one face-sized reward matrix, no per-cell boxing
+
+    # The exit composite's hazard source nests `ExitHazardSource` inside `MappedField`, so a wrapper
+    # that fails to forward the env-dependence `Val` to what it wraps shows up here.
+    xlay   = GriddedLayout(:wealth => GriddedContinuous(range(0.0, 4.0; length = nz)),
+                           :income => Discrete([0.5, 1.5]), :exiting => Discrete([1]))
+    xchain = ExogenousExit(xlay; bequest = 0.0,
+                           survival = (; wealth, income, env) -> 0.99 - 0.001 * wealth * income * env.δ)
+    Vx     = zeros(nz, 2, 1)
+    leave() = backward!(xchain, Vx, (δ = 1.0,))
+    leave()
+    @test (@allocated leave()) < 240_000                # 400 dep-combinations through two source wrappers
 end

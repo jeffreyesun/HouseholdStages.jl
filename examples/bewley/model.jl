@@ -80,10 +80,6 @@ precautionary-wealth moments attached:
   * `A_mean`         — `∫ a dΛ`, the aggregate self-insurance buffer stock.
   * `frac_constrained` — `∫ 𝟙{a ≈ a_min} dΛ`, the mass pinned at the
     borrowing constraint (the hand-to-mouth share).
-
-Identical block to Aiyagari/Huggett (the canonical L03/L04 chain); the
-Bewley content is the fixed-`r` partial-equilibrium framing in
-`steady_state.jl` and the precautionary moments here.
 """
 function bewley_household(p = bewley_params)
     layout = GriddedLayout(
@@ -98,9 +94,9 @@ function bewley_household(p = bewley_params)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
-    ) # defaults: (; utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+    ) # defaults: (; utility_axes = nothing, skip_monotonicity_check = false)
 
     a_floor = p.a_min
     hh = shock ∘ receipt ∘ savings

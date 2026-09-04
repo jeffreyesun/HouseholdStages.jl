@@ -22,7 +22,7 @@ replicate_age(IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Portfolio, N; a
 | `IncomeShock` | `MarkovStage(:income)` | persistent earnings risk |
 | `Receipt` | `WealthChangeStage` | cash-on-hand `x = b + y(age)·ε` (no `(1+r)` — see below) |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | picks invested wealth `b'`, `c = x − b'` |
-| `Portfolio` | `MeanVarianceStage` | picks risky share `θ`; next wealth `b'·(R_f + θ·(R_k − R_f))` |
+| `Portfolio` | `GaussianLoadingStage` (portfolio reading: anchor = `R_f`, increment = excess return) | picks the continuous risky share `θ ∈ [0, 1]`; next wealth `b'·(R_f + θ·(μ_x + σ_x·Z))`, the Gaussian excess moment-matched to the equity calibration |
 
 **No bespoke stage.** This is the four-stage portfolio chain under the
 life-cycle product combinator. The one subtlety versus the plain `life_cycle`
@@ -50,25 +50,25 @@ start-of-period distribution.
 ```
 age :  θ*(age)   mean financial wealth
   1 :  1.000     1.49
-  4 :  1.000     0.85
-  8 :  0.935     0.64     ← initial buffer bottoms out
- 14 :  0.996     1.33
- 19 :  0.687     1.98
- 21 :  0.519     2.51     ← peak financial wealth
- 24 :  0.489     1.09
+  4 :  0.998     0.84
+  8 :  0.935     0.63     ← initial buffer bottoms out
+ 14 :  0.996     1.30
+ 19 :  0.671     2.23
+ 21 :  0.532     2.48     ← peak financial wealth
+ 24 :  0.529     1.07
 ```
 
 - **High when young, declining with age.** θ* is at the cap (full equity) for
   the young, then descends monotonically over the back half of working life
   toward the **Merton interior share ≈ 0.28** as human wealth depletes. This
   is the CGM signature.
-- Mean cross-sectional wealth ≈ 1.31; the financial-wealth profile is
+- Mean cross-sectional wealth ≈ 1.29; the financial-wealth profile is
   hump-shaped, peaking (~2.5) just before retirement.
 - The terminal age reads θ* = 0 mechanically (no bequest ⇒ `b' = 0`).
 
 ## Limitation surfaced by the dogfood
 
-The package's `MeanVarianceStage` allocates over **financial** wealth; it does
+The package's `GaussianLoadingStage` allocates over **financial** wealth; it does
 not augment human capital as an explicit riskless asset the way CGM's closed
 form does. Consequently a household at (or near) zero financial wealth sits in
 the extremely concave region of the CRRA value function and **de-risks** —

@@ -27,9 +27,13 @@
 #                 double-count it.
 #   ConsumptionSavings — `ConsumptionSavingsStage` picks invested wealth `b'`;
 #                 `c = x − b'`.
-#   Portfolio   — `MeanVarianceStage` picks the risky share `θ`, so start-of-
-#                 next-period wealth is `b'·(R_f + θ·(R_k − R_f))`. The
-#                 risk-free leg `R_f` plays the role of the life_cycle `(1+r)`.
+#   Portfolio   — `GaussianLoadingStage`, here read as the portfolio stage
+#                 (anchor = R_f, increment = the Gaussian excess return): picks
+#                 the CONTINUOUS risky share
+#                 `θ ∈ [0, 1]`, so start-of-next-period wealth is
+#                 `b'·(R_f + θ·(μ_x + σ_x·Z))` for a truncated-Gaussian excess
+#                 return moment-matched to `(R_risky, p_risky)`. The risk-free
+#                 leg `R_f` plays the role of the life_cycle `(1+r)`.
 #
 # **No bespoke household stage is rolled here** — this is exactly the
 # `examples/portfolio` chain, wrapped in the `examples/life_cycle`
@@ -67,11 +71,14 @@ using HouseholdStages
     y_peak     :: Float64 = 1.0
     y_curv     :: Float64 = 0.5
     repl       :: Float64 = 0.4                     # retirement replacement of peak earnings
-    # Portfolio block (mean premium ≈ 5%, excess-return variance ≈ 0.044).
+    # Portfolio block (mean premium ≈ 5%, excess-return sd ≈ 0.21). The
+    # literature's lognormal equity return enters through its first two excess
+    # moments — the stage's truncated-Gaussian excess is moment-matched to
+    # (R_risky, p_risky) at construction.
     R_f     :: Float64 = 1.02                        # gross risk-free return (the implicit "1+r")
     R_risky :: Vector{Float64} = [0.86, 1.28]        # gross risky returns (mean 1.07)
     p_risky :: Vector{Float64} = [0.5, 0.5]
-    shares  :: Vector{Float64} = collect(0.0:0.05:1.0)
+    share_bounds :: Tuple{Float64, Float64} = (0.0, 1.0)   # continuous risky-share interval (cap = no leverage)
     N_w   :: Int       = 100
     w_min :: Float64   = 0.0
     w_max :: Float64   = 60.0
@@ -81,7 +88,7 @@ using HouseholdStages
     # the CRRA continuation value is so concave that the cash-poor young
     # de-risk, whereas the CGM story is that the young hold ~100% equity because
     # their large (bond-like) human wealth substitutes for the riskless asset.
-    # The package's `MeanVarianceStage` allocates over FINANCIAL wealth and does
+    # The package's `GaussianLoadingStage` allocates over FINANCIAL wealth and does
     # not augment human capital into the portfolio-relevant wealth, so the
     # endowment keeps newborns above the concavity floor through the early ages
     # and recovers the high-young, declining-with-age share. Fully reproducing
@@ -152,10 +159,13 @@ function cgm_household(p = cgm_params)
         wealth_post = (; wealth, income, env) -> wealth + env.y * income)        # NO (1+r): the portfolio stage carries the return
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
-    portfolio = MeanVarianceStage(layout;                                     # next wealth b'·(R_f + θ·(R_k − R_f))
-        shares = p.shares, risk_free = p.R_f, risky_returns = p.R_risky, probs = p.p_risky)
+    # Gaussian excess-return moments matched to the two-point lottery's excess returns.
+    μx = sum(p.p_risky .* (p.R_risky .- p.R_f))                               # 0.05
+    σx = sqrt(sum(p.p_risky .* (p.R_risky .- p.R_f) .^ 2) - μx^2)             # 0.21
+    portfolio = GaussianLoadingStage(layout;                                     # next wealth b'·(R_f + θ·(μ_x + σ_x·Z))
+        anchor = p.R_f, increment_mean = μx, increment_sd = σx, loading_bounds = p.share_bounds)
 
     age_chain = shock ∘ receipt ∘ savings ∘ portfolio
     hh = replicate_age(age_chain, p.N; axis = :age)

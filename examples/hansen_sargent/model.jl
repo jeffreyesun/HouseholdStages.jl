@@ -113,7 +113,7 @@ function hansen_sargent_household(p = hansen_sargent_params; θ::Float64 = 1.0)
     receipt = IncomeStage(layout)                                # default (1+r)·wealth + w·income
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = robust_expectation ∘ receipt ∘ savings
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))
@@ -135,7 +135,7 @@ function reference_household(p = hansen_sargent_params)
     receipt = IncomeStage(layout)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))
@@ -150,20 +150,20 @@ hansen_sargent_env(p = hansen_sargent_params) = (; r = p.r, w = p.w)
 
 """
 Recover the chosen next-period wealth VALUES `b'(wealth, income)` from a solved
-household. The savings leaf is the `ArgmaxStage` on the `:wealth` axis (the
-unique `(N_w, n_income)`-shaped policy-bearing leaf — the `LogitChoiceStage`
-income leaf also carries a policy, sized `(n_income, …)`, so we select by
-shape); its policy stores next-wealth GRID INDICES, mapped here to grid values.
-This is a distribution-free read of the savings policy, used to show the
-precautionary tilt cleanly (the own-measure stationary mean wealth couples the
-policy with the worst-case forward measure; see steady_state.jl).
+household. The savings leaf is the `ContinuousArgmaxStage` inside
+`ConsumptionSavingsStage` on the `:wealth` axis (the unique `(N_w,
+n_income)`-shaped policy-bearing leaf — the `LogitChoiceStage` income leaf also
+carries a policy, sized `(n_income, …)`, so we select by shape); its policy
+holds the chosen next-wealth values directly. This is a distribution-free read
+of the savings policy, used to show the precautionary tilt cleanly (the
+own-measure stationary mean wealth couples the policy with the worst-case
+forward measure; see steady_state.jl).
 """
 function hansen_sargent_savings_policy(hh, p = hansen_sargent_params)
-    wgrid = HouseholdStages.axisvalues(GriddedContinuous(p.w_min, p.w_max, p.N_w; spacing = :log))
     n_y   = length(p.y_grid)
     leaves = filter(s -> !(s isa HouseholdStages.ChainStage) &&
                          hasmethod(HouseholdStages.policy, Tuple{typeof(s)}),
                     collect(hh.buffer.stages))
     savings = only(filter(s -> size(HouseholdStages.policy(s)) == (p.N_w, n_y), leaves))
-    return wgrid[HouseholdStages.policy(savings)]            # (wealth, income) → next-wealth value
+    return HouseholdStages.policy(savings)                   # (wealth, income) → next-wealth value
 end

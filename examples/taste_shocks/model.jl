@@ -95,7 +95,7 @@ function taste_shock_household(p = taste_shock_params)
     taste_value  = UtilityStage(layout; utility = (; taste) -> taste)
     savings      = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
     )
 

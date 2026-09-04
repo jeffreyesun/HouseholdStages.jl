@@ -183,7 +183,7 @@ function income_ar1_household(p = income_ar1_params; method = :rouwenhorst)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     hh = shock ∘ receipt ∘ savings

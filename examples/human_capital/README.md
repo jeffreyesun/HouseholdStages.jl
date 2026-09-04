@@ -39,9 +39,10 @@ gross investment `i` the agent forgoes earnings on `s·h = (i/a)^{1/γ}` time:
     effort_cost(i; env) = env.R · (i / env.a)^{1/γ},   production(h; env) = env.R · h.
 
 With `γ ∈ (0,1)` the cost is convex (exponent `1/γ > 1`), so the reward
-`R·h − effort_cost(h' − (1−δ)h)` is supermodular in `(h', h)` and the
-`:divide_conquer` monotone solve is valid. Higher ability `a` lowers the cost —
-the engine of the life cycle.
+`R·h − effort_cost(h' − (1−δ)h)` is supermodular in `(h', h)` and the optimal
+policy is monotone — though the stage does not lean on that, solving by brute
+per-column max.
+Higher ability `a` lowers the cost — the engine of the life cycle.
 
 ## Equilibrium notes
 

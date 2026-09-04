@@ -67,8 +67,8 @@ function cgm_solve(p = cgm_params; verbosity = 1)
     hh   = cgm_household(p)
     product = hh.buffer.stages[1]               # define_moments! wraps the product in a singleton chain
     comp = product.buffer.components            # the N per-age (wealth, income, age=1) chains
-    out_layout = product.buffer.output_layout
-    nw, nε, N = layout_size(input_layout(comp[1]))[1], length(p.ε_grid), p.N
+    out_layout = end_layout(product)
+    nw, nε, N = layout_size(start_layout(comp[1]))[1], length(p.ε_grid), p.N
 
     env_age(a) = (; y = age_earnings(a, p))     # portfolio returns are stage params; only y is env-borne
 
@@ -85,7 +85,7 @@ function cgm_solve(p = cgm_params; verbosity = 1)
     # Forward cohort simulation — newborns at age 1 #
     #----------------------------------------------#
     π0 = income_stationary(p)
-    in_cells = cell_array(input_layout(comp[1]))
+    in_cells = cell_array(start_layout(comp[1]))
     w_grid = getproperty.(in_cells[:, 1, 1], :wealth)
     i0 = argmin(abs.(w_grid .- p.w0_init))       # grid point nearest the newborn endowment
     Λ_cohort = zeros(nw, nε, 1)
@@ -113,7 +113,7 @@ function cgm_solve(p = cgm_params; verbosity = 1)
         @printf "  per-age cohort mass    : min %.6f, max %.6f (target 1.0)\n" minimum(sum(Λ_stack; dims = (1, 2))) maximum(sum(Λ_stack; dims = (1, 2)))
         @printf "  V finite               : %s\n" all(isfinite, V_stack)
         @printf "  mean wealth (x-section): %.4f\n" mean_wealth_xsec
-        @printf "  Merton interior share  : %.3f (cap = %.2f)\n" merton maximum(p.shares)
+        @printf "  Merton interior share  : %.3f (cap = %.2f)\n" merton last(p.share_bounds)
         println("  age : risky share θ*(age) | mean financial wealth")
         for a in 1:N
             bar = repeat("█", round(Int, 40 * θ_profile[a]))

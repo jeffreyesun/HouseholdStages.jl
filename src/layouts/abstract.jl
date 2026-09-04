@@ -1,17 +1,11 @@
-# State-space layouts — the representations a stage's value/distribution lives on.
-# This file holds the shared vocabulary: the axis representations, the `AbstractLayout`
-# supertype, and the representation-agnostic allocation defaults. Each concrete
-# representation (`GriddedLayout`, and later `DynamicGridLayout`,
-# `GriddedWithDerivativesLayout`) lives in its own file and provides how it allocates
-# buffers and realises the stage protocol.
+# State-space layouts — the representations a stage's value function and distribution live on: the
+# axis representations, the `AbstractLayout` supertype, and the representation-free allocation defaults.
 
 # Axis representations #
 #----------------------#
-# Nameless: an axis rep carries only its grid/levels. The axis NAME lives in the layout
-# (its `Names` type parameter), associated positionally via the `:name => rep` pairs the
-# layout constructor takes.
+# An axis representation carries only its grid or levels; the axis name lives in the layout.
 
-"Supertype for axis representations — a continuous interpolation grid (`GriddedContinuous`) or a finite discrete level set (`Discrete`)."
+"Supertype for axis representations."
 abstract type AxisRep end
 
 "A continuous (interpolated) state axis, backed by a numeric grid."
@@ -25,19 +19,18 @@ struct Discrete{T, V<:AbstractVector{T}} <: AxisRep
 end
 
 """
-A continuous-grid axis: `n` points on `[lo, hi]` with `:linear` or `:log` spacing.
-
-`:log` maps `t ∈ [0, log((hi−lo+shift)/shift)]` through `exp(t)·shift − shift + lo`,
-placing the first knot at `lo`, the last at `hi`, and concentrating points near `lo`
-(the wealth-grid convention in `examples/`). `shift` defaults to `1`.
+A continuous-grid axis: `n` points on `[lo, hi]` with `:linear` or `:log` spacing. `:log` hits both
+endpoints exactly and concentrates points near `lo`, the more so the smaller `shift`.
 """
 function GriddedContinuous(lo::Real, hi::Real, n::Int;
                            spacing::Symbol = :linear, shift::Real = 1.0)
+    E = float(promote_type(typeof(lo), typeof(hi)))    # grid eltype follows the endpoints, not a literal
+    loE, hiE, s = convert(E, lo), convert(E, hi), convert(E, shift)
     if spacing === :linear
-        return GriddedContinuous(collect(range(lo, hi; length = n)))
+        return GriddedContinuous(collect(range(loE, hiE; length = n)))
     elseif spacing === :log
-        grid = [exp(t) * shift - shift + lo
-                for t in range(0.0, log((hi - lo + shift) / shift); length = n)]
+        grid = [exp(t) * s - s + loE
+                for t in range(zero(E), log((hiE - loE + s) / s); length = n)]
         return GriddedContinuous(grid)
     else
         error("GriddedContinuous: spacing must be :linear or :log, got :$spacing")
@@ -52,29 +45,27 @@ axissize(r::Discrete)          = length(r.levels)
 axisvalues(r::GriddedContinuous) = r.grid
 axisvalues(r::Discrete)          = r.levels
 
+# Equality is structural: two representations built independently from the same grid compare equal.
+Base.:(==)(a::GriddedContinuous, b::GriddedContinuous) = a.grid == b.grid
+Base.:(==)(a::Discrete, b::Discrete)                   = a.levels == b.levels
+Base.hash(r::GriddedContinuous, h::UInt) = hash(r.grid,   hash(:GriddedContinuous, h))
+Base.hash(r::Discrete, h::UInt)          = hash(r.levels, hash(:Discrete, h))
+
 # Layout supertype + representation stubs #
 #-----------------------------------------#
 
-"""
-A *representation* of the state space — how the value function's axes are discretised.
-Stage methods dispatch on the layout type, so a stage can be realised differently per
-representation.
-"""
+"A representation of the state space: how the value function's axes are discretised."
 abstract type AbstractLayout end
 
-# Phase-2 layouts, not yet implemented — declared so the stage files can carry their
-# (`error`-ing) per-representation `backward!`/`forward!` sections.
-"Stub: a gridded layout that also carries value derivatives at each knot."
+#TODO Neither representation is implemented; they are declared so stage methods can dispatch on them.
+"A gridded layout that also carries value derivatives at each knot."
 struct GriddedWithDerivativesLayout{Names, Axes<:Tuple} <: AbstractLayout
     axes :: Axes
 end
-"Stub: a moving-knot grid whose knots are part of the representation."
+"A moving-knot grid whose knots are part of the representation."
 struct DynamicGridLayout{Names, Axes<:Tuple} <: AbstractLayout
     axes :: Axes
 end
 
-# Representation-agnostic allocation default. `cache` is persistent (spec,layout)-level
-# build storage (e.g. a cost tensor); most stages need none. (`spec` is left untyped —
-# this is the layout-keyed default; the stage that needs a cache overrides it.)
-"Allocate persistent build storage for a stage on this layout. Default `nothing`."
-allocate_cache(spec, ::Type, ::AbstractLayout) = nothing
+"Persistent build storage for a stage between its two boundary layouts; `nothing` unless the stage declares some."
+allocate_cache(spec, ::Type, ::AbstractLayout, ::AbstractLayout) = nothing

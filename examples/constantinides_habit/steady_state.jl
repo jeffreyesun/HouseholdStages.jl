@@ -23,11 +23,11 @@ function surplus_diagnostic(p, hh, Λ_ss)
     Sgrid = collect(range(0.0, p.S_max; length = p.N_S))
     Λ1  = copy(forward!(hh.buffer.stages[1], copy(Λ_ss)))   # after IncomeShock
     Λ2  = copy(forward!(hh.buffer.stages[2], copy(Λ1)))     # after Receipt → distribution entering Choose
-    pol = HouseholdStages.policy(hh.buffer.stages[3])        # chosen savings index per (x, S, y) cell
+    pol = HouseholdStages.policy(hh.buffer.stages[3])        # chosen savings b'* per (x, S, y) cell — a continuous (off-grid) wealth VALUE
     minsurp, floormass, tot = Inf, 0.0, sum(Λ2)
     for I in CartesianIndices(Λ2)
         Λ2[I] > 1e-12 || continue
-        surplus = (wgrid[I[1]] - wgrid[pol[I]]) - p.γ * Sgrid[I[2]]   # c − γS, c = x − b'
+        surplus = (wgrid[I[1]] - pol[I]) - p.γ * Sgrid[I[2]]   # c − γS, c = x − b' (pol is already the wealth value)
         minsurp = min(minsurp, surplus)
         surplus <= p.c_floor && (floormass += Λ2[I])
     end

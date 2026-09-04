@@ -52,8 +52,8 @@ risky-share profile θ*(age).
 function catherine_solve(z::Symbol, p = catherine_params; hh = catherine_household(p), verbosity = 1)
     product = hh.buffer.stages[1]
     comp = product.buffer.components
-    out_layout = product.buffer.output_layout
-    nw, nε, N = layout_size(input_layout(comp[1]))[1], length(p.y_grid), p.N
+    out_layout = end_layout(product)
+    nw, nε, N = layout_size(start_layout(comp[1]))[1], length(p.y_grid), p.N
 
     env_age(a) = (; y = age_earnings(a, p), z)
 
@@ -70,7 +70,7 @@ function catherine_solve(z::Symbol, p = catherine_params; hh = catherine_househo
     # Forward cohort simulation — newborns at age 1 #
     #----------------------------------------------#
     π0 = income_stationary(z, p)
-    in_cells = cell_array(input_layout(comp[1]))
+    in_cells = cell_array(start_layout(comp[1]))
     w_grid = getproperty.(in_cells[:, 1, 1], :wealth)
     i0 = argmin(abs.(w_grid .- p.w0_init))
     Λ_cohort = zeros(nw, nε, 1)

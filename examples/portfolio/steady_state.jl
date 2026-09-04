@@ -23,7 +23,7 @@ function portfolio_steady_state(p = portfolio_params; w = p.w, verbosity = 1)
     res = solve_steady_state_given_env!(hh, env)
     m   = compute_moments(hh, res.Λ, env)
 
-    θ = HouseholdStages.policy(hh.buffer.stages[end])      # the Portfolio (MeanVarianceStage) leaf
+    θ = HouseholdStages.policy(hh.buffer.stages[end])      # the Portfolio (GaussianLoadingStage) leaf
     share_lo, share_hi, share_mean = minimum(θ), maximum(θ), sum(θ) / length(θ)
 
     if verbosity > 0

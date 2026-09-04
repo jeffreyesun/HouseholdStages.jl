@@ -29,7 +29,7 @@ function rnd_investment_steady_state(p = rnd_investment_params; verbosity = 1)
     res = solve_steady_state_given_env!(hh, env)
     (; V, Λ, history) = res
 
-    cells  = cell_array(output_layout(hh))            # (N_k, N_s) cells with fields (:knowledge, :shock)
+    cells  = cell_array(end_layout(hh))            # (N_k, N_s) cells with fields (:knowledge, :shock)
     k_vals = getfield.(cells, :knowledge)
     s_vals = getfield.(cells, :shock)
 

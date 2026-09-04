@@ -70,7 +70,8 @@ The linear lower segment resolves the borrowing constraint (where
 policies are highly nonlinear) without crowding grid points into the
 deep-negative tail; the log upper segment keeps the post-receipt point
 `(1+r) a + y` inside the grid for active cells with modest `N_pos`
-(the Aiyagari log-grid argument). The two segments share the `0.0` node.
+(the Aiyagari log-grid argument). The negative segment drops its own
+endpoint so `0.0` appears once.
 """
 function huggett_asset_grid(p = huggett_params)
     neg = collect(range(p.a_min, 0.0; length = p.N_neg + 1))[1:end-1]      # [a_min, 0)
@@ -83,11 +84,10 @@ end
 #--------------------------#
 
 """
-Build the moment-attached Huggett household block
+Build the Huggett household block
 `IncomeShock ∘ IncomeReceipt ∘ ConsumptionSavingsStage` with the
-`A_supplied = ∫ asset dΛ` moment attached (aggregate bond demand, which
-the outer loop drives to zero). Identical block to Aiyagari; only the
-receipt law (`(1+r) a + y`, no wage) and the attached moment differ.
+`A_supplied = ∫ asset dΛ` moment attached — aggregate bond demand, which
+the outer loop drives to zero.
 """
 function huggett_household(p = huggett_params)
     layout = GriddedLayout(
@@ -102,9 +102,9 @@ function huggett_household(p = huggett_params)
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
-    ) # defaults: (; utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+    ) # defaults: (; utility_axes = nothing, skip_monotonicity_check = false)
 
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh;

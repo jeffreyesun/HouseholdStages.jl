@@ -73,8 +73,8 @@ wealth sits illiquid. `β(1+r_a) < 1` keeps the illiquid stock off the grid ceil
 
 ## Caveats
 
-- The `Consume` choice uses the monotone (`:divide_conquer`) walk with `assume_monotone = true`; the
-  brute test (max abs diff `0.0` across seeds) confirms the optimal policy is monotone on these grids.
+- The `Consume` choice is a brute on-grid argmax; the brute-Bellman test is exact by construction
+  (max abs diff `0.0` across seeds).
 - Quadratic-cost (smooth) adjustment; a fixed cost would give the lumpy (S,s) margin.
 
 ## Run

@@ -32,13 +32,10 @@ ri_composition(layout; choice_axis, λ) =
 
 _ri_n(layout, choice_axis) = axissize(layout.axes[axis_position(layout, choice_axis)])
 
-# Per-origin choice probabilities from the logit sub-buffer (choice axis only ⇒
-# s = 1): P(j | origin i) = eψC[i,j] · W[j,1] / res[i,1]. For a zero-cost logit
-# eψC ≡ 1, so this is just the softmax over the destination weights.
-function _ri_prob(chain, n)
-    k = chain.buffer.stages[1].kernel    # stages[1] is the logit (modern)
-    return [parent(k.eψC)[i, j] * k.value_weight[j, 1] / k.normalizer[i, 1] for i in 1:n, j in 1:n]
-end
+# Per-origin choice probabilities from the logit sub-stage (`stages[1]` of the chain). On a
+# choice-axis-only layout that is the `(origin, dest)` matrix `P[i, j]`; for a zero-cost logit the
+# choice weights are ≡ 1, so it is just the softmax over the destination weights.
+_ri_prob(chain) = choice_probabilities(chain.buffer.stages[1])
 
 @testset "RI composition — reproduces the Matějka–McKay option value (env prior)" begin
     # Three actions; the RI value with prior q and payoff (carried in V_end) is
@@ -63,7 +60,7 @@ end
     @test V_in ≈ expected atol = 1e-12
 
     # Choice probabilities are the Matějka–McKay posterior P(a|s) ∝ q(a)·exp(V/λ).
-    P = _ri_prob(chain, 3)
+    P = _ri_prob(chain)
     for i in 1:3
         denom = sum(q[a] * exp(V_end[a] / λ) for a in 1:3)
         for j in 1:3
@@ -96,13 +93,11 @@ end
     @test V_in ≈ LSE atol = 1e-12
 
     # (b) The logit Gibbs reward r = V_in_logit − Kᵀ(V_out + u) = λ·H(π) (cost = 0).
-    # No stored reward on the modern logit: recover it via the kernel pull. The logit
+    # No stored reward on the logit: recover it via the kernel pull. The logit
     # sub-stage ran on the UtilityStage's output V_out + u (u on the choice axis), and
     # the chain V_in IS the logit's V_start, so r_logit = V_in − Kᵀ(V_out + u).
     logit = chain.buffer.stages[1]
-    k = logit.kernel
-    eC = reshape(parent(k.eψC), n, n)
-    π = [eC[i, j] * k.value_weight[s, j] / k.normalizer[s, i] for s in 1:3, i in 1:n, j in 1:n]
+    π = choice_probabilities(logit)                      # π[s, i, j] over the (w, a) start layout
     H = [-sum(π[s, i, j] * log(π[s, i, j]) for j in 1:n) for s in 1:3, i in 1:n]
 
     V_logit_out = V_out .+ reshape(u, 1, n)              # utility adds u on the choice axis
@@ -140,10 +135,8 @@ end
     # standard chain duality ⟨V_in − r_eff, Λ_in⟩ = ⟨V_out, Λ_out⟩ holds, where the
     # effective reward absorbs both u and the entropy. We verify it via the policy.
     logit = chain.buffer.stages[1]
-    k = logit.kernel
     n = 2
-    eC = reshape(parent(k.eψC), n, n)
-    π = [eC[i, j] * k.value_weight[s, j] / k.normalizer[s, i] for s in 1:3, i in 1:n, j in 1:n]
+    π = choice_probabilities(logit)                      # π[s, i, j] over the (w, a) start layout
     u = λ .* log.(q)
     H = [-sum(π[s, i, j] * log(π[s, i, j]) for j in 1:n) for s in 1:3, i in 1:n]
     Eπu = [sum(π[s, i, j] * u[j] for j in 1:n) for s in 1:3, i in 1:n]

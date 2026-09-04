@@ -20,9 +20,9 @@
 #     household = product(block_1, …, block_n; axis = :beta)
 #
 # Because β is a plain `Float64` field of the ConsumptionSavingsStage spec,
-# all per-type blocks share an IDENTICAL concrete Spec TYPE and identical
-# input layout (only the β VALUE differs) — exactly the uniformity
-# `product` requires. The `:beta` axis is declared a size-1 SINGLETON in the
+# all per-type blocks are ONE chain at different parameter values, sharing the
+# start and end layouts `product` asks of its factors. The `:beta` axis is
+# declared a size-1 SINGLETON in the
 # block layout; `product` grows it `1 → n`, one slice per β-type.
 #
 # The direct sum is BLOCK-DIAGONAL: there is no transition across β-types
@@ -72,8 +72,8 @@ const discount_het_params = DiscountHetParams()
 """
 Build one β-type's within-period block `IncomeShock ∘ IncomeReceipt ∘
 ConsumptionSavingsStage(β)` against the SHARED layout (the `:beta` axis a
-size-1 singleton, so every β-block has identical input layout and Spec type).
-Only the discount factor `β` differs across calls.
+size-1 singleton that `product` grows to the type count, so every β-block sits
+between the same two layouts). Only the discount factor `β` differs across calls.
 """
 function discount_het_block(β::Float64, p = discount_het_params)
     layout = GriddedLayout(
@@ -87,7 +87,7 @@ function discount_het_block(β::Float64, p = discount_het_params)
         wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + env.w * income)
     savings = ConsumptionSavingsStage(layout;
         β       = β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
 
     return shock ∘ receipt ∘ savings

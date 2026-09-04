@@ -28,9 +28,9 @@ include("model.jl")
 
 using Printf
 
-"Mean wealth `∫ wealth dΛ` for a distribution on the household output layout."
+"Mean wealth `∫ wealth dΛ` for a distribution on the household block's end layout."
 function mean_wealth(hh, Λ)
-    cells = cell_array(hh.buffer.output_layout)
+    cells = cell_array(end_layout(hh))
     return sum(getproperty.(cells, :wealth) .* Λ)
 end
 

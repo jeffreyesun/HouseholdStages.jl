@@ -8,7 +8,7 @@
 # `solve_steady_state_given_env!` runs directly on the moment-attached
 # ChainStage, each type's slice converging independently. All example-side work
 # is reporting: pulling each type's seated risky-share policy `θ*(x)` from its
-# `MeanVarianceStage` leaf and computing participation rates (the fraction of
+# `GaussianLoadingStage` leaf and computing participation rates (the fraction of
 # mass with `θ* > 0`) per type and across the wealth distribution.
 
 include("model.jl")
@@ -18,9 +18,8 @@ using Printf
 """
 The per-type seated risky-share policy `θ*(x)`. Navigates the solved product:
 the moment-wrapped ChainStage holds the `ProductStage` (stage 1); its bundled
-components are the per-type Merton blocks; each block's `MeanVarianceStage` leaf
-is its LAST stage, whose `policy` is the frozen `θ*(x)` on `(wealth, income)`.
-Reporting-side navigation only — the household BLOCK is untouched library code.
+components are the per-type Merton blocks; each block's `GaussianLoadingStage` leaf
+is its LAST stage, whose `policy` is the seated `θ*(x)` on `(wealth, income)`.
 """
 function gm_share_policies(hh, nptype)
     prod   = hh.buffer.stages[1]                                   # the ProductStage
@@ -32,9 +31,7 @@ end
 Solve the Gomes–Michaelides `:ptype`-product household at the fixed env and
 report the participation margin: per-type participation rates and conditional
 shares, plus participation across three equal-mass wealth bins (the central
-comparative static — participation RISES with wealth). Returns `V`, `Λ`, the
-aggregate `mean_wealth`, the per-type policies and rates, and the wealth-binned
-participation profile.
+comparative static — participation RISES with wealth).
 """
 function gm_steady_state(p = gm_params; verbosity = 1)
     hh  = gm_household(p)

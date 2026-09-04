@@ -115,7 +115,7 @@ function becker_tomes_household(p = becker_tomes_params)
 
     # Choose the child's HC h' onto the auxiliary axis (benefit via continuation,
     # cost via downstream debit).
-    choose = ArgmaxStage(full; axis = :hc, reward = zeros(p.N_h, 1))
+    choose = ArgmaxStage(block, full; axis = :hc, reward = zeros(p.N_h, 1))
 
     # Debit the child-HC production cost from wealth.
     debit = WealthChangeStage(full; axis = :wealth,
@@ -133,7 +133,7 @@ function becker_tomes_household(p = becker_tomes_params)
     # Consume and bequeath: c chosen, bequest b' = wealth − c. β = altruism; the
     # continuation is the child's dynastic value.
     consume = ConsumptionSavingsStage(block; β = p.α, axis = :wealth,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = earn ∘ choose ∘ debit ∘ commit ∘ forget ∘ reproduce ∘ consume
     return define_moments!(hh;

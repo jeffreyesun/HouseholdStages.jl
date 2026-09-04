@@ -111,7 +111,7 @@ function carroll_household(p = carroll_params)
             (env.R / (env.G * psi)) * wealth + xi)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth)
 
     hh = shock_ψ ∘ reweight ∘ shock_ξ ∘ receipt ∘ savings

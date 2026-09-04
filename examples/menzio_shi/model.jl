@@ -163,7 +163,7 @@ function menzio_shi_household(p = params)
     # (4) Savings on the wealth grid.
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = aim ∘ match ∘ receipt ∘ savings
     return define_moments!(hh;

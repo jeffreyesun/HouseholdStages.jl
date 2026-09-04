@@ -10,39 +10,35 @@
 # wealth, and so accumulate into the top tail — a small entrepreneurial elite
 # holds a disproportionate share of wealth.
 #
-# READ THIS FIRST — what is and is not a straight composition.
+# READ THIS FIRST — why both occupational legs run the same chain.
 # ------------------------------------------------------------------
-# The catalog status is ◐ (MODEL_CATALOG §2). The LITERAL occupational model —
-# a worker spine `Receipt ∘ Savings` and an entrepreneur spine
-# `Receipt ∘ Savings ∘ Business(MeanVarianceStage)` with an EXTRA risk stage —
-# CANNOT be joined by `⊕`/`product`. `product` requires every leg to have the
-# IDENTICAL concrete Spec type (`ProductStageSpec` asserts
-# `typeof(s) === first_type`), and `ChainStageSpec` is parameterised on the
-# tuple of its component spec types — so a 4-stage chain and a 5-stage chain are
-# DIFFERENT concrete types and the assertion fails (verified empirically — see
-# README.md §"The give-up"). That is the documented ◐: distinct stage CHAINS per
-# leg is per-axis gating the library does not offer.
+# The catalog status is ◐ (MODEL_CATALOG §2), and the ◐ is one thing the library
+# cannot say: a `GaussianLoadingStage`'s risky technology
+# (`anchor`/`increment_mean`/`increment_sd`) is scalars or `FromEnv`, never
+# axis-closures, so ONE shared business stage offers the same gamble to every
+# occupation and cannot be switched on for one slice and off for another. The
+# risk margin therefore lives in a PER-LEG stage.
 #
-# The catalog names two clean exits, "a wealth-floor or a fully separate `⊕`
-# leg." This file takes the **separate-`⊕`-leg** exit: make the two legs
-# STRUCTURALLY UNIFORM by giving BOTH the same chain
+# `⊕`/`product` asks its legs to share a start layout and an end layout and
+# leaves their specs free, so a worker spine and an entrepreneur spine with an
+# extra risk stage would join as written. Both legs run the same chain
 #
 #     Receipt ∘ Savings ∘ Business ∘ Realize ∘ ZShock
 #
-# and letting the worker carry a DEGENERATE `Business` (a `MeanVarianceStage`
-# whose risky returns equal the risk-free return — a safe asset) and the
-# identity branch of `Realize`. The two legs then differ ONLY in the VALUES /
-# the captured Bool fed to the shared stages — exactly the
-# `examples/discount_heterogeneity` device (one builder, parameterised by value,
-# defined at one syntactic site so the closure TYPES match and the Spec types
-# are identical). `product` accepts them, and an `ArgmaxStage` over the
-# `:occupation` axis seats the occupational CHOICE on top. The
-# `examples/risk_shifting` Vereshchagina–Hopenhayn **wealth-floor** is the OTHER
-# exit (it captures the entrepreneurial risk margin gating-free, no occupation
-# axis at all).
+# for a modelling reason instead: the worker's asset earns the safe return R_f,
+# and that return IS the `Business` stage's `anchor`, so dropping the stage from
+# the worker leg would drop the safe return with it. The worker's `Business` is
+# DEGENERATE (zero excess mean, a numerically-negligible excess sd — the safe
+# asset; the Gaussian stage requires σ > 0) and its `Realize` is the identity
+# branch. The two legs then differ ONLY in the VALUES / the captured Bool fed to
+# the shared stages — exactly the `examples/discount_heterogeneity` device (one
+# builder, parameterised by value). An `ArgmaxStage` over the `:occupation` axis
+# seats the occupational CHOICE on top. The `examples/risk_shifting`
+# Vereshchagina–Hopenhayn **wealth-floor** is the other route to the same margin
+# (it captures the entrepreneurial risk margin with no occupation axis at all).
 #
-# What the constant-returns `MeanVarianceStage` can and cannot do here (honest).
-# A streaming `MeanVarianceStage` is CONSTANT-returns and its returns cannot
+# What the constant-returns `GaussianLoadingStage` can and cannot do here (honest).
+# A streaming `GaussianLoadingStage` is CONSTANT-returns and its returns cannot
 # read the productivity / occupation axis. With a mean PREMIUM the patient rich
 # accumulate without bound (no stationary distribution); mean-NEUTRAL, the
 # gamble only has option value at the limited-liability floor, so away from the
@@ -77,17 +73,26 @@
 #                `w_e` (most entrepreneurial income is the business).
 # `Savings`    — `ConsumptionSavingsStage` picks the stake `a'` carried into the
 #                business / safe asset; `c = x − a'`, CRRA.
-# `Business`   — `MeanVarianceStage` on `:wealth`: stake `a'` becomes
-#                `a'·(R_f + θ·(R_k − R_f))`, agent picking project intensity θ.
-#                The WORKER's `Business` is degenerate (`R_k = R_f`, the safe
-#                asset for any θ); the ENTREPRENEUR faces a genuine (mean-neutral)
-#                two-point project — pure project RISK, dialled by θ.
+# `Business`   — `GaussianLoadingStage` on `:wealth` (the portfolio stage read as
+#                a business-risk dial: anchor = R_f, increment = the project's
+#                excess payoff): stake `a'` becomes
+#                `a'·(R_f + θ·(μ_x + σ_x·Z))`, the agent picking project
+#                intensity θ continuously in [0, 1]. The WORKER's `Business` is
+#                degenerate (μ_x = 0, σ_x ≈ 0 — the safe asset); the
+#                ENTREPRENEUR faces genuine mean-neutral Gaussian project risk,
+#                dialled by θ. The Gaussian carries the succeed/failure
+#                calibration through its first two moments (μ_x = 0,
+#                σ_x = 0.26), which is all the mechanism needs: the bet matters
+#                only through the VARIANCE it puts in front of the
+#                limited-liability floor — the entrepreneur's edge is the
+#                z-boost in `Realize`, and the option value of risk at the
+#                floor holds for any mean-zero spread.
 # `Realize`    — `WealthChangeStage`: `a ↦ max(z·a, a_floor)` for the
 #                ENTREPRENEUR (productivity `z` compounds the invested wealth;
 #                limited liability floors a wiped-out project at `a_floor`) and
 #                `a ↦ max(a, a_floor)` for the WORKER (the safe asset, floor
 #                slack). One shared closure branching on a captured Bool
-#                `entrepreneur` — identical closure TYPE both legs.
+#                `entrepreneur`.
 # `ZShock`     — `MarkovStage` on `:z` (entrepreneurial productivity), placed
 #                LAST so `z` transitions for NEXT period after the occupation
 #                choice and the business have used THIS period's `z`.
@@ -114,14 +119,16 @@ using HouseholdStages
     z_grid :: Vector{Float64} = [0.96, 1.08]
     P_z    :: Matrix{Float64} = [0.94 0.06;          # low state is very persistent
                                  0.55 0.45]          # high (productive) state is transient
-    # The business technology — a MEAN-NEUTRAL two-point project (E[R_k] = R_f):
-    # the entrepreneur's EDGE is the productivity boost z, not a return premium
-    # (a constant-returns premium would explode wealth). θ dials pure project risk.
+    # The business technology — a MEAN-NEUTRAL project (E[R_k] = R_f): the
+    # entrepreneur's EDGE is the productivity boost z, not a return premium
+    # (a constant-returns premium would explode wealth). θ dials pure project
+    # risk. The success/failure calibration below feeds the moment-matched
+    # Gaussian excess (μ_x = 0, σ_x = 0.26).
     R_f    :: Float64 = 1.04                          # safe gross return (worker's asset; entrepreneur's risk-free leg)
     R_up   :: Float64 = 1.30                          # business success multiple
     R_dn   :: Float64 = 0.78                          # business failure multiple (E[R_k] = 0.5·1.30 + 0.5·0.78 = 1.04 = R_f)
     p_up   :: Float64 = 0.50                          # success probability
-    shares :: Vector{Float64} = collect(range(0.0, 1.0; length = 8))   # project intensity θ
+    σ_safe :: Float64 = 1e-6                          # worker's numerically-riskless business (the Gaussian stage requires σ > 0)
     a_floor :: Float64 = 0.40                         # limited-liability floor on realized wealth
     κ      :: Float64 = 0.05                          # per-period fixed cost of running a business
     N_a   :: Int       = 140
@@ -139,18 +146,18 @@ const entrepreneurship_params = EntrepreneurshipParams()
 
 """
 Build ONE occupational leg `Receipt ∘ Savings ∘ Business ∘ Realize ∘ ZShock`
-against the shared layout (the `:occupation` axis a size-1 singleton, so every
-leg has identical input layout and — because the closures are defined HERE, at
-one syntactic site, capturing values not differing code — identical Spec TYPE).
-The worker and entrepreneur legs differ ONLY in the captured VALUES `wage`,
-`business_returns`, and the `entrepreneur` flag — exactly the uniformity
-`product` requires. The worker's `Business` is degenerate (`business_returns`
-all `= R_f`, a safe asset) and its `Realize` is the floor alone; the
-entrepreneur's `Business` is the mean-neutral project and its `Realize` applies
-the productivity-`z` compounding under the limited-liability floor.
+against the shared layout, the `:occupation` axis a size-1 singleton that
+`product` grows to the leg count — so every leg shares the two boundary layouts
+`product` asks of its factors. The worker and entrepreneur legs differ ONLY in
+the captured VALUES `wage`, the excess-return moments
+`(excess_mean, excess_sd)`, and the `entrepreneur` flag. The worker's `Business` is
+degenerate (zero excess mean, negligible sd — a safe asset) and its `Realize`
+is the floor alone; the entrepreneur's `Business` is the mean-neutral Gaussian
+project and its `Realize` applies the productivity-`z` compounding under the
+limited-liability floor.
 """
 function entrepreneurship_leg(p::EntrepreneurshipParams; wage::Float64,
-                              business_returns::Vector{Float64}, entrepreneur::Bool)
+                              excess_mean::Float64, excess_sd::Float64, entrepreneur::Bool)
     layout = GriddedLayout(
         :wealth     => GriddedContinuous(p.a_min, p.a_max, p.N_a; spacing = :log),
         :z          => Discrete(p.z_grid),
@@ -158,15 +165,12 @@ function entrepreneurship_leg(p::EntrepreneurshipParams; wage::Float64,
     )
 
     receipt = WealthChangeStage(layout; axis = :wealth,                       # labor income
-        wealth_post = (; wealth, env) -> wealth + wage)
+        wealth_post = (; wealth) -> wealth + wage)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
-    business = MeanVarianceStage(layout; axis = :wealth,                      # safe (worker) or mean-neutral project (entrepreneur)
-        shares        = p.shares,
-        risk_free     = p.R_f,
-        risky_returns = business_returns,
-        probs         = [p.p_up, 1 - p.p_up])
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
+    business = GaussianLoadingStage(layout; axis = :wealth,                      # safe (worker) or mean-neutral project (entrepreneur)
+        anchor = p.R_f, increment_mean = excess_mean, increment_sd = excess_sd)
     realize = WealthChangeStage(layout; axis = :wealth,                       # entrepreneur: productivity z + limited liability; worker: floor alone
         wealth_post = (; z, wealth, env) ->
             entrepreneur ? max(z * wealth, env.a_floor) : max(wealth, env.a_floor))
@@ -178,26 +182,31 @@ end
 """
 The entrepreneurship household block:
 `OccChoice ∘ product(worker_leg, entrepreneur_leg; axis = :occupation)`.
-Both legs share an identical Spec type (the worker's `Business` is a degenerate
-safe-return `MeanVarianceStage` and its `Realize` is the floor alone), so
-`product` joins them along `:occupation`; the `OccChoice` `ArgmaxStage` on top
+The worker's `Business` is a degenerate safe-return `GaussianLoadingStage` and
+its `Realize` is the floor alone; `product` joins the two along `:occupation`,
+and the `OccChoice` `ArgmaxStage` on top
 seats the within-period occupational choice (higher continuation, less the fixed
-cost `κ` of entrepreneurship). Attaches `mean_wealth = ∫ wealth dΛ` and
-`entrepreneur_share = ∫ 1{occupation = 2} dΛ`.
+cost `κ` of entrepreneurship). The entrepreneur's Gaussian excess moments are
+matched to the success/failure bet `{R_up − R_f w.p. p_up, R_dn − R_f}`:
+`μ_x = p_up·(R_up − R_f) + (1 − p_up)·(R_dn − R_f)` (= 0 by the mean-neutral
+calibration) and `σ_x = √(p_up(1 − p_up))·|R_up − R_dn|`. Attaches
+`mean_wealth = ∫ wealth dΛ` and `entrepreneur_share = ∫ 1{occupation = 2} dΛ`.
 """
 function entrepreneurship_household(p = entrepreneurship_params)
+    μx = p.p_up * (p.R_up - p.R_f) + (1 - p.p_up) * (p.R_dn - p.R_f)         # 0 (mean-neutral)
+    σx = sqrt(p.p_up * (1 - p.p_up)) * abs(p.R_up - p.R_dn)                  # 0.26
     worker = entrepreneurship_leg(p; wage = p.w,
-        business_returns = [p.R_f, p.R_f], entrepreneur = false)             # degenerate: safe asset
+        excess_mean = 0.0, excess_sd = p.σ_safe, entrepreneur = false)       # degenerate: safe asset
     entre  = entrepreneurship_leg(p; wage = p.w_e,
-        business_returns = [p.R_up, p.R_dn], entrepreneur = true)            # genuine project risk + productivity boost
+        excess_mean = μx, excess_sd = σx, entrepreneur = true)               # genuine project risk + productivity boost
     legs = product(worker, entre; axis = :occupation)
 
     # Free occupational re-choice; reward[after, before] independent of the
     # incoming occupation. Running a business (occupation 2) costs κ.
-    occ_layout = legs.buffer.output_layout
+    occ_layout = end_layout(legs)
     occ_reward = [0.0   0.0;
                   -p.κ  -p.κ]
-    occ_choice = ArgmaxStage(occ_layout; axis = :occupation, reward = occ_reward, search = :brute)
+    occ_choice = ArgmaxStage(occ_layout; axis = :occupation, reward = occ_reward)
 
     hh = occ_choice ∘ legs
     return define_moments!(hh;

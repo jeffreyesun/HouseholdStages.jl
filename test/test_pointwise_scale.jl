@@ -81,8 +81,7 @@ end
 
 @testset "PointwiseScale — AD through a FromEnv scale (Dual β)" begin
     layout = GriddedLayout(:z => Discrete([1, 2, 3]))
-    stage = lift_jacobian(PointwiseScaleStage(layout; backward = FromEnv(:a), forward = 1);
-                          mode = :forward, n_dual = 1)
+    stage = lift_jacobian(PointwiseScaleStage(layout; backward = FromEnv(:a), forward = 1); n_dual = 1)
     D  = eltype(V_start_buffer(stage))
     ad = D(0.95, ForwardDiff.Partials((1.0,)))
     V  = [1.0, 2.0, 3.0]

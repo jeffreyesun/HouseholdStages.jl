@@ -11,8 +11,8 @@ using HouseholdStages
     @test stage isa MarkovStage
     @test stage.spec.axis === :income
     @test stage.spec.transition_matrix === P
-    @test input_layout(stage) === layout
-    @test output_layout(stage) === layout
+    @test start_layout(stage) === layout
+    @test end_layout(stage) === layout
     @test size(stage.scratch.V_start) == (4, 2)
     @test size(stage.scratch.Λ_end)   == (4, 2)
 end
@@ -124,8 +124,8 @@ end
     end
 end
 
-# A constant matrix with no deps must reproduce the pre-refactor numbers exactly.
-@testset "MarkovStage — constant matrix matches pre-refactor" begin
+# The base case, pinned by hand-computed numbers: a constant matrix with no deps.
+@testset "MarkovStage — constant matrix, hand-computed backward" begin
     P = [0.7 0.3; 0.3 0.7]
     layout = GriddedLayout(
         :wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]),
@@ -140,13 +140,14 @@ end
     @test all(isapprox.(V_start[:, 2], 0.3*1.0 + 0.7*4.0; atol = 1e-12))
 end
 
-# Rectangular Markov: an n×1 ones transition marginalizes the axis (this is what `ForgetfulSumStage`
-# now is). De-squared from the old `transition_matrix must be square` constraint.
+# Rectangular Markov: an n×1 ones transition marginalizes the axis, which is what
+# `ForgetfulSumStage` is built from.
 @testset "MarkovStage — rectangular n×1 ones = marginalize (forget)" begin
     layout = GriddedLayout(:w => GriddedContinuous([0.0, 1.0]),
                            :t => Discrete([:a, :b, :c]))
-    mk = MarkovStage(layout; axis = :t, transition_matrix = ones(3, 1))   # 3 `from` → 1 `to`
-    @test HouseholdStages.layout_size(output_layout(mk.spec, layout)) == (2, 1)   # :t resized to 1
+    mk = MarkovStage(layout, resize_axis(layout, :t, 1);
+                     axis = :t, transition_matrix = ones(3, 1))                # 3 `from` → 1 `to`
+    @test HouseholdStages.layout_size(end_layout(mk)) == (2, 1)                # :t resized to 1
 
     V_end = reshape(Float64[10, 20], 2, 1)                                # (w, t = 1)
     V_start = copy(backward!(mk, V_end, nothing))                         # broadcast across t

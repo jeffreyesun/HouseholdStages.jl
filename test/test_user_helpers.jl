@@ -15,8 +15,7 @@ function _aiyagari_chain(; N_w::Int = 20)
     savings = ConsumptionSavingsStage(layout;
         β = 0.96,
         utility = (cell, c; env) -> c < 0 ? -Inf : log(c),
-        axis = :wealth,
-        monotone_search = :divide_conquer)
+        axis = :wealth)
     hh = shock ∘ receipt ∘ savings
     return define_moments!(hh; K_supplied = at_end(integrand = :wealth, reduce = sum))
 end
@@ -80,10 +79,8 @@ end
 
 
 @testset "solve_transition_given_env_path! — kernel re-seat works (per-period buffers)" begin
-    # The L05 footgun fix: in a transition path, every period's forward
-    # uses its own kernel. With per-period chains sharing the Spec, the
-    # forward at period t reads the period-t kernel populated by the
-    # period-t backward.
+    # Every period of a transition path forwards through its own kernel: the per-period chains share
+    # the Spec, so the forward at period t reads the kernel the period-t backward populated.
 
     hh  = _aiyagari_chain()
     env_ss = (; _aiy_prices(5.0)...)
@@ -98,28 +95,25 @@ end
 end
 
 
-@testset "compute_direct_jacobian! — runs without error on a chain with moments" begin
+@testset "compute_fake_news_ssj — runs without error on a chain with moments" begin
     hh  = _aiyagari_chain()
     env = (; _aiy_prices(5.0)...)
     solve_steady_state_given_env!(hh, env)
 
-    J = compute_direct_jacobian!(hh, env, 5;
-                                 inputs = (:r,), outputs = (:K_supplied,))
+    J = compute_fake_news_ssj(hh, env, 5;
+                              inputs = (:r,), outputs = (:K_supplied,))
     @test J isa AbstractMatrix
     @test size(J) == (5, 5)
+    @test all(isfinite, J)
 end
 
 
 @testset "make_env / env_schema — closures don't surface in static schema" begin
-    # For closure-bound stages (WealthChange / ConsumptionSavings) the
-    # static schema is empty: env keys are read by user closures, which
-    # the package does not introspect. `make_env` is therefore
-    # permissive (no required fields to enforce). Errors for missing
-    # closure-bound fields surface at the first backward!/forward! call
-    # via getproperty failure. This is documented behavior — see
-    # `abstract.jl` `effective_env_slice`. The schema-as-contract is
-    # only useful for stages with env-resolved `FromEnv` fields
-    # or explicit `static_env_deps`.
+    # For closure-bound stages (WealthChange / ConsumptionSavings) the static schema is empty: env
+    # keys are read inside user closures, which the package does not introspect, so `make_env` has
+    # no required fields to enforce and a missing key surfaces as a `getproperty` failure at the
+    # first `backward!`. The schema is a contract only for `FromEnv` fields and explicit
+    # `static_env_deps` (`abstract.jl`, `effective_env_slice`).
     hh = _aiyagari_chain()
     schema = env_schema(hh)
     @test schema isa NamedTuple

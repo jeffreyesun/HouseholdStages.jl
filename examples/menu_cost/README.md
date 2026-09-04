@@ -44,8 +44,8 @@ Five existing exported stages, normally parameterized — **no bespoke stage, no
   `p*(z) = (ε/(ε−1))·z`. It reads both axes, so it lives in its own `UtilityStage`; the reset reward
   sees only the `(p', p)` price pair.
 - **Reset** is the (S,s) ArgmaxStage: keeping the price (`p' = p`, the diagonal) is free, resetting to
-  any other grid price pays `F`. `search = :brute` because the fixed cost makes the reward
-  non-supermodular.
+  any other grid price pays `F`. The argmax is brute — the fixed cost makes the reward
+  non-supermodular, so a monotone solve would not apply.
 
 The backward sweep reproduces the menu-cost Bellman
 

@@ -95,7 +95,7 @@ function mortgage_household(p = mortgage_params)
     shock_h = MarkovStage(block; axis = :hp,     transition_matrix = p.P_hp)
     receipt = WealthChangeStage(block; axis = :wealth,                            # cash on hand
         wealth_post = (; wealth, income) -> (1 + p.r_a) * wealth + p.w * income)
-    choose  = ArgmaxStage(full; axis = :refi_choice, reward = zeros(K, 1))        # grows 1 → K
+    choose  = ArgmaxStage(block, full; axis = :refi_choice, reward = zeros(K, 1))   # grows 1 → K
     ltvgate = BorrowingConstraintStage(full;                                      # cash-out beyond the LTV cap
         infeasible = (; refi_choice, mortgage, hp) -> (mprime = p.m_grid[Int(refi_choice)];
                                                        mprime > mortgage && mprime / hp > p.θ_ltv))
@@ -105,7 +105,7 @@ function mortgage_household(p = mortgage_params)
         wealth_post = (; refi_choice) -> p.m_grid[Int(refi_choice)])
     forget  = ForgetfulSumStage(full; axis = :refi_choice)
     savings = ConsumptionSavingsStage(block; β = p.β, axis = :wealth,             # c = a_post − a'
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
     hh = shock_y ∘ shock_h ∘ receipt ∘ choose ∘ ltvgate ∘ pay ∘ setm ∘ forget ∘ savings
     return define_moments!(hh;

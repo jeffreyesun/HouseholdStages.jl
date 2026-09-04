@@ -25,8 +25,8 @@ ReturnType ∘ IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ ReturnReceipt
 
 ## The key design decision
 
-`MeanVarianceStage` — the natural portfolio primitive — takes a **plain** return vector
-(`risky_returns`, `risk_free`); those are scalars fixed across cells, so it *cannot* vary the mean
+`GaussianLoadingStage` — the natural portfolio primitive — takes **plain** return moments
+(`anchor`/`increment_mean`/`increment_sd`, scalars or `FromEnv`); those are fixed across cells, so it *cannot* vary the mean
 return by a persistent `:rtype` axis. Fagereng's contribution is precisely heterogeneity in the
 **mean** return across people, so the return must read the type. A `WealthChangeStage` does exactly
 that: its `wealth_post` closure reads any layout axis, so
@@ -39,7 +39,7 @@ carries the per-type return cleanly and faithfully — "the return process is th
 package's" (catalog §2). `R(rtype)` is supplied via `env`, so the heterogeneous and homogeneous
 calibrations are a pure `env` swap on an identical block.
 
-A homogeneous `MeanVarianceStage` portfolio leg composes cleanly on top (see `examples/portfolio`),
+A homogeneous `GaussianLoadingStage` portfolio leg composes cleanly on top (see `examples/portfolio`),
 but it would add an idiosyncratic-risk margin that is *not* the Fagereng mechanism, so it is omitted.
 
 ## Equilibrium

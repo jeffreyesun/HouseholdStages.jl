@@ -40,7 +40,8 @@ costly each period (holding `knowledge` needs gross R&D `δ_z·knowledge` at cos
 `c_rnd(δ_z·knowledge)^{1/γ}`), so for `1/γ > η` the per-period payoff is eventually
 decreasing and the optimum is finite. `CapitalInvestmentStage` carries `δ_z` in its
 gross-investment definition. The convex reward is supermodular in
-`(knowledge', knowledge)`, so the `:divide_conquer` monotone solve is valid.
+`(knowledge', knowledge)`, so the optimal policy is monotone — though the stage
+does not lean on that, solving by brute per-column max.
 
 ## Driver (example-side, allowed)
 

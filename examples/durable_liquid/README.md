@@ -25,7 +25,7 @@ Depreciate ∘ IncomeShock ∘ Receipt ∘ [ ChooseD' ∘ Debit ∘ SetDurable �
 | `Depreciate` | `MarkovStage` (`:durable`) | W.p. `π_dep` the stock drops one level (breakdown/depreciation); level 1 absorbing. The churn source that keeps the (S,s) adjustment margin live. |
 | `IncomeShock` | `MarkovStage` (`:income`) | 2-state labour-income Markov. |
 | `Receipt` | `WealthChangeStage` (`:liquid`) | Cash on hand `b ↦ (1+r_b)·b + w·y`. |
-| `ChooseD'` | `ArgmaxStage` (`:durable_choice`) | Picks the durable target `d'` onto a separate auxiliary axis (reward `0`; `:brute`, since the lumpy policy is non-monotone). Grows the singleton choice axis `1 → N_d`. |
+| `ChooseD'` | `ArgmaxStage` (`:durable_choice`) | Picks the durable target `d'` onto a separate auxiliary axis (reward `0`; the brute per-column `findmax` — right for the lumpy, non-monotone policy). Grows the singleton choice axis `1 → N_d`. |
 | `Debit` | `WealthChangeStage` (`:liquid`) | `b ↦ max(b − outlay(d',d), ε)`. The down-payment + fixed cost, reading **both** `:durable_choice` (d') and `:durable` (old d). `outlay = p·(d'−d) + F·1{d'≠d}` (zero on keep). |
 | `SetDurable` | `WealthChangeStage` (`:durable`) | Commits the choice `d ↦ d'`. |
 | `Forget` | `ForgetfulSumStage` (`:durable_choice`) | Collapses the auxiliary axis. |
@@ -53,7 +53,7 @@ the auxiliary axis. The fixed cost and down-payment ride the **following**
 
 ## A note on feasibility
 
-The `:brute` `ArgmaxStage` requires every cell to have at least one feasible
+The `ArgmaxStage` requires every cell to have at least one feasible
 action. A corner like cash-on-hand `= 0` with no durable to sell would otherwise
 have none (keep gives `c = 0`, buying is unaffordable, nothing to sell). The
 subsistence floor `ε` on post-transaction liquid (exactly the two-asset-HANK

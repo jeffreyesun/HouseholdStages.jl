@@ -30,7 +30,7 @@
 # the inverted production function (`Q = a·input^γ`), cheaper at high ability `a` —
 # the engine of the schooling burst. With `γ ∈ (0,1)` the exponent `1/γ > 1` is
 # convex, so `production − effort_cost` is supermodular in `(h', h)` and
-# `CapitalInvestmentStage`'s `:divide_conquer` monotone solve is valid.
+# `CapitalInvestmentStage`'s divide-and-conquer monotone solve is valid.
 #
 # Reuse note: Caucutt–Lochner, Lee–Seshadri, and Daruich are the SAME household
 # block — `CapitalInvestmentStage(:h)` — with MORE phases (a longer `env_at(t)` schedule)
@@ -106,7 +106,7 @@ function manuelli_seshadri_household(p = manuelli_seshadri_params)
         depreciation = p.δ,
         production   = (h; env) -> env.earn * h,
         effort_cost  = (i; env) -> i <= 0 ? 0.0 : env.price * (i / env.a)^(1 / p.γ))
-        # defaults: (; axis = :h, monotone_search = :divide_conquer, assume_monotone = false)
+        # defaults: (; axis = :h)
 
     return define_moments!(invest;
         mean_h        = at_end(integrand = :h, reduce = sum),

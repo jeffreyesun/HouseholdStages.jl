@@ -102,7 +102,7 @@ function temptation_household(p = temptation_params)
         # GP felicity: commitment u(c) + temptation λ·w(c) − temptation peak
         # λ·w(m − b_min). The peak is constant in c (it depends only on the
         # cell's cash-on-hand cell.wealth), so it shifts V without moving policy.
-        utility = (cell, c; env) ->
+        utility = (cell, c) ->
             u_crra(c, Val(p.σ)) +
             p.λ * u_crra(c, Val(p.σ_t)) -
             p.λ * u_crra(cell.wealth - b_min, Val(p.σ_t)),

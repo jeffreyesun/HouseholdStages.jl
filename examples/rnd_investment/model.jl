@@ -41,7 +41,7 @@
 # depreciation in its gross-investment definition `i = knowledge' − (1−δ_z)knowledge`.
 #
 # The reward `−c_rnd·(knowledge' − (1−δ_z)knowledge)^{1/γ}` is supermodular in
-# `(knowledge', knowledge)`, so `CapitalInvestmentStage`'s `:divide_conquer` monotone solve
+# `(knowledge', knowledge)`, so `CapitalInvestmentStage`'s divide-and-conquer monotone solve
 # is valid. Prices are exogenous (partial equilibrium): the "outer loop" is a
 # single stationary `solve_steady_state_given_env!` over `(knowledge, shock)`.
 
@@ -128,9 +128,8 @@ function rnd_investment_household(p = rnd_investment_params)
         axis         = :knowledge,
         β            = p.β,
         depreciation = p.δ_z,
-        production   = (k; env) -> 0.0,                                 # revenue lives in the UtilityStage
-        effort_cost  = (i; env) -> p.c_rnd * i^(1 / p.γ))               # convex R&D cost on gross R&D i ≥ 0
-        # defaults: (; monotone_search = :divide_conquer, assume_monotone = false)
+        production   = (k) -> 0.0,                                 # revenue lives in the UtilityStage
+        effort_cost  = (i) -> p.c_rnd * i^(1 / p.γ))               # convex R&D cost on gross R&D i ≥ 0
 
     hh = shock ∘ revenue ∘ do_rnd
     return define_moments!(hh;

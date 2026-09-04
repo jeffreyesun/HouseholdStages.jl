@@ -6,9 +6,10 @@ TFP step. Two distinct uses of the same chain:
 - **`transition.jl`** — solves the deterministic perfect-foresight
   transition by damped Picard on the path of aggregate capital
   `{K_t}` using `solve_transition_given_env_path!`.
-- **`ssj.jl`** — exercises the household-layer sequence-space-Jacobian
-  utilities `expectation_vectors`, `build_F`, `J_from_F` at the
-  steady state.
+- **`ssj.jl`** — runs the household layer's two env-derivative
+  services at the steady state, `compute_fake_news_ssj` and
+  `compute_steady_state_gradient`, plus `expectation_vectors` on its
+  own.
 
 The chain is the same three-stage decomposition as `../aiyagari/`:
 
@@ -25,8 +26,7 @@ period; the household chain's env stays minimal — `(; K, r, w)`.
 A **permanent step**: `A_t = A_0` for all `t ≥ 1` with default
 `A_0 = 1.05`. The economy starts in the deterministic steady state at
 `A = 1.0` and transitions to a new steady state at the higher TFP
-level. (`model.jl`'s `tfp_path` returns the constant path; AR(1)
-mean-reversion would be a one-line edit.)
+level. `model.jl`'s `tfp_path` builds the path.
 
 ## Transition algorithm (`transition.jl`)
 
@@ -69,16 +69,15 @@ K[100] (≈end)    = 6.1340
 ```
 
 Converges in 15 outer iterations at `damping = 0.2`, `tol = 1e-3`.
-Larger damping (≥ 0.3) oscillates near the impact period — the new
-three-stage chain diffuses mass more slowly through share-based
-redistribution than a single-stage `GridSavings` would, so the
-K-supplied response lags the K-update more and needs heavier damping
-for stability.
+Larger damping (≥ 0.3) oscillates near the impact period: the chain
+redistributes mass by shares across three stages, so `K_supplied`
+trails a `K` update by more than one period and the outer loop needs
+the heavier damping to stay stable.
 
-## Sequence-space utilities (`ssj.jl`)
+## Sequence-space derivatives (`ssj.jl`)
 
-Steps 2–4 of the SSJ fake-news algorithm
-(Auclert-Bardóczy-Rognlie-Straub 2021) on the post-refactor chain:
+The env-derivative services on this chain, with `:r` as the input and
+the moment `K_supplied` as the output:
 
 ```julia
 ssj_demo(; T_horizon = 30)
@@ -88,15 +87,25 @@ ssj_demo(; T_horizon = 30)
 2. Re-seed the chain's kernels at the steady-state env via one
    `backward!` / `forward!` pair (so the K used in the K-transpose
    iteration is the SS K).
-3. **Step 2.** `𝓔 = expectation_vectors(hh, cell -> cell.wealth,
-   T_horizon)` iterates the chain's `forward_adjoint!` to produce
-   the K-transpose-propagated expectation arrays.
-4. **Step 3.** Synthesise per-period direct effects (`curlyY`,
-   `curlyD`) — the script uses a placeholder pattern; a real
-   application populates these by finite-difference perturbation of
-   env around the steady state. Then `F = build_F(curlyY, curlyD,
-   curlyE)`.
-5. **Step 4.** `J = J_from_F(F)` cumulates along anti-diagonals.
+3. `𝓔 = expectation_vectors(hh, cell -> cell.wealth, T_horizon)`
+   iterates the chain's `forward_adjoint!` to produce the
+   K-transpose-propagated expectation arrays — step 2 of the
+   fake-news algorithm (Auclert-Bardóczy-Rognlie-Straub 2021), shown
+   standalone here and run internally by the driver below.
+4. `compute_fake_news_ssj(hh, env_ss, T_horizon; …)` assembles
+   the whole `J[t, s] = ∂K_supplied_t/∂r_s`, once at `mode = :dual`
+   (one tangent-seated Dual chain, exact at every anticipation
+   distance) and once at `mode = :fd` (two primal lanes at
+   `env_ss ± h`, `O(h²)`), and prints `max|J_dual − J_fd|` as a
+   self-check. `ssj.jl`'s header says what limits that number, and
+   why the steady-state solve tolerance has to be tight before an
+   `h`-scan of it means anything.
+5. `compute_steady_state_gradient(hh, env_ss; …)` gives the
+   permanent-shock comparative static `∂K_supplied/∂r`. It re-solves
+   the steady state at `env_ss ± h` rather than differentiating it —
+   the steady state is a fixed point, and this package does not
+   differentiate fixed points — so `:fd` is its only mode and its
+   accuracy floor is `lambda_tol`, which the call passes explicitly.
 
 The SS-correctness check `⟨𝓔[t], Λ_ss⟩ ≈ K_ss` holds for all `t` (to
 ~4 decimals at `N_w = 400`) — `𝓔[t]` is the K-transpose-propagated
@@ -106,28 +115,20 @@ the Λ-side `compute_moments` does.
 
 ### What `expectation_vectors` requires
 
-`forward_adjoint!` methods on every component of the chain. The
-library ships them for `MarkovStage`, `WealthChangeStage`,
-`ConsumptionSavingsStage`, `LogitChoiceStage`, `MigrationStage`,
-`ArgmaxStage`, `IdentityStage`, `ForgetfulSumStage`, and the
-`ChainStage` / `ProductStage` adjoint methods. `WealthChangeStage`'s
-`backward_adjoint!` is currently a stub — not needed by the
-sequence-space pipeline (which only uses `forward_adjoint!`); see
-the package-level Status section.
+`forward_adjoint!` methods on every component of the chain. These
+come generically from each stage's seated kernel
+(`src/lifts/jacobian.jl`); only stages whose forward is not a plain
+`K·Λ` (`PointwiseScaleStage`, `EntryStage`) carry overrides.
 
-## Discrete-policy stages and finite-difference cross-checks
+## Finite-difference cross-checks
 
-A natural validation is to compare `J[t, s]` from the SSJ pipeline
-against a finite-difference perturbation of the household chain at
-the steady state. For an Aiyagari chain whose savings stage is
-hard-argmax `ConsumptionSavingsStage`, a small-ε FD produces zero —
-the integer policy is locally invariant to sub-grid price
-perturbations. The per-stage adjoints in `lift_jacobian.jl` handle
-this via the envelope theorem (subgradient at boundary cells); the
-SSJ pipeline inherits the same behaviour. A meaningful FD
-cross-check requires a smoothed choice stage —
-`LogitChoiceStage`-based savings with non-trivial `ε`. That's a
-natural next variant; this example does not include it.
+The `:fd` lane of step 4 is meaningful here because the savings
+policy is a continuous off-grid position (`ContinuousArgmaxStage`
+seating an `InterpKernel`), so it moves smoothly with sub-grid price
+perturbations. The independent oracle — the direct method, FD on
+whole transition paths — is heavy at `N_w = 400` and lives in
+`test/test_sequence_space.jl` on a smaller fixture, alongside the
+fake-news identity `F[t,s] = J[t,s] − J[t−1,s−1]`.
 
 ## Run
 
@@ -136,8 +137,8 @@ julia --project=. examples/aiyagari_mit_shock/transition.jl
 julia --project=. examples/aiyagari_mit_shock/ssj.jl
 ```
 
-The transition takes ~30 s at `T = 100`, `N_w = 400`; the SSJ demo
-takes a few seconds after the same warm-up.
+The transition takes ~30 s at `T = 100`, `N_w = 400`; the derivatives
+demo takes ~14 s at `T_horizon = 30`, most of it compilation.
 
 ## Files
 
@@ -145,6 +146,6 @@ takes a few seconds after the same warm-up.
   `aiyagari_prices(K, A, p)`, `tfp_path`.
 - `transition.jl` — pre- and post-shock SS warm-starts plus the
   damped Picard transition loop.
-- `ssj.jl` — sequence-space-Jacobian utilities demo.
-- `../notebooks/aiyagari_mit_shock.jl` — Pluto-style four-section
-  walkthrough.
+- `ssj.jl` — sequence-space and steady-state derivatives demo.
+- `../notebooks/aiyagari_mit_shock.jl` — self-contained walkthrough,
+  model through sequence-space derivatives.

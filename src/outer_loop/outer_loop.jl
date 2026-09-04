@@ -2,25 +2,13 @@
 # Outer-loop public API — Stage-keyed                          #
 ###############################################################
 #
-# Public, Stage-keyed layer over the Spec/Buffer-keyed primitives in
-# `outer_loop_internal.jl` (same function names; multiple dispatch routes
-# the call). Most are thin delegates (V-only, Λ-only, transition, Jacobian);
-# the one exception is the `solve_steady_state_given_env!` bundle, which
-# absorbs the bookkeeping the primitive omits — warm-start from the chain's
-# buffer, write converged V/Λ back, compute moments, return caller-safe copies.
-#
-# Closing-the-model logic (tâtonnement on K / r, AR(1) shock
-# generation) stays with the consumer.
+# Single-env solves warm-starting from the chain's buffer, the derivative services, and the
+# transition delegate.
 
-
-# Inner V fixed point — public delegate #
+# Inner fixed points — public delegates #
 #---------------------------------------#
 
-"""
-Stage-keyed VFI: warm-start `V` from the buffer (or `V_init`), run the
-Spec/Buffer-keyed primitive, write the converged `V` back for the next call's
-warm-start, and return a caller-safe copy.
-"""
+"Stage-keyed VFI: warm-start from the chain's buffer unless `V_init` is given, and write `V` back."
 function solve_vfi_steady_state_given_env!(stage::AbstractStage, env;
                                            V_init       = nothing,
                                            tol::Real    = 1e-7,
@@ -37,15 +25,7 @@ function solve_vfi_steady_state_given_env!(stage::AbstractStage, env;
     return (; V = copy(res.V), iters = res.iters, converged = res.converged)
 end
 
-
-# Inner Λ fixed point — public delegate #
-#---------------------------------------#
-
-"""
-Stage-keyed Λ-iteration. `Λ_init` defaults to the uniform distribution — Λ
-converges fast from uniform, and the buffer's `Λ_end` slot can hold half-iterated
-state, so it makes a poor warm-start. Writes the converged Λ back; returns a copy.
-"""
+"Stage-keyed Λ-iteration from `Λ_init` or the uniform default, writing `Λ` back to the buffer."
 function solve_lambda_steady_state_given_env!(stage::AbstractStage;
                                               Λ_init=nothing,
                                               tol::Real=1e-6,
@@ -62,10 +42,8 @@ end
 #----------------------------------------------------#
 
 """
-Solve the household block at one `env`. Wraps the Spec/Buffer-keyed primitive
-with the bookkeeping it omits: warm-start `V` from the buffer, write converged
-`V`/`Λ` back, compute attached moments, and return caller-safe copies. `history`
-reports the V- and Λ-iteration counts; `iters` is their sum.
+Solve the household block at one `env`: `V`, then the stationary `Λ`, then the attached moments.
+Warm-starts `V` from the chain's buffer and writes `V`/`Λ` back.
 """
 function solve_steady_state_given_env!(stage::ChainStage, env;
                                        vfi_tol::Real       = 1e-7,
@@ -102,38 +80,56 @@ function solve_steady_state_given_env!(stage::ChainStage, env;
 end
 
 
+# Steady-state gradient — the permanent-shock comparative static #
+#----------------------------------------------------------------#
+
+"""
+The permanent-shock comparative static `∂(steady-state moment)/∂env`, as a `Dict` keyed by
+`(input, output)`. Every moment must reduce with `sum`; `mode = :fd` is the only mode.
+"""
+function compute_steady_state_gradient(stage::ChainStage, env_ss;
+                                       inputs=nothing, outputs=nothing,
+                                       mode::Symbol=:fd, h::Real=1e-5, kwargs...)
+    mode === :fd || error(
+        "compute_steady_state_gradient: mode = :$mode. The steady state is a fixed point, and " *
+        "differentiating one is out of scope for this package — the derivative of a fixed point is " *
+        "not the derivative of the loop that finds it. `:fd` re-solves at `env ± h`.")
+    (; V_ss, Λ_ss, in_names, out_names) =
+        _derivative_service_setup("compute_steady_state_gradient", stage, env_ss, inputs, outputs, mode)
+    tols = merge((; vfi_tol = SS_PRECONDITION_TOL, lambda_tol = SS_PRECONDITION_TOL), values(kwargs))
+    return _ss_gradient_fd(stage, env_ss, V_ss, Λ_ss, in_names, out_names; h, tols...)
+end
+
+
 # Transition path — public delegate #
 #-----------------------------------#
 
-"""
-Stage-keyed transition driver — a thin delegate to the Spec-keyed primitive,
-which allocates per-period chains and runs the backward+forward sweep. `Λ_0` is
-the initial distribution; `V_T` the terminal continuation value.
-"""
+"Stage-keyed deterministic transition along `env_path`, from initial distribution `Λ_0` to terminal value `V_T`."
 solve_transition_given_env_path!(stage::ChainStage, env_path::AbstractVector;
                                  Λ_0::AbstractArray,
-                                 V_T::AbstractArray,
-                                 max_inner_iters::Int=1) =
+                                 V_T::AbstractArray) =
     solve_transition_given_env_path!(stage.spec, env_path;
                                      Λ_0, V_T,
-                                     layout=stage.buffer.input_layout,
-                                     max_inner_iters)
-
-
-# Direct-effect Jacobian — public delegate #
-#------------------------------------------#
+                                     boundaries=boundaries(stage),
+                                     interiors=interiors(stage))
 
 """
-Stage-keyed **direct-effect-only** Jacobian: the period-0 direct effect of an env
-perturbation (`curlyY_0` by two-sided FD at the steady state), written on the
-diagonal `s = t` with zeros off-diagonal. It does NOT compute the distribution-
-mediated effects (`curlyD`, `curlyE`) — for the full sequence-space Jacobian use
-`expectation_vectors`, `build_F`, and `J_from_F` (see `examples/aiyagari_mit_shock/ssj.jl`).
-Treating this as a real fake-news Jacobian would produce wrong IRFs.
+The direct method: one Dual replay of `env_path` gives `∂(moment path)/∂env_path[s][input]`, a
+NamedTuple of vectors over output dates, one per moment — column `s` of the Jacobian at a flat path.
 """
-compute_direct_jacobian!(stage::ChainStage, env_ss, T::Int;
-                         inputs    = nothing,
-                         outputs   = nothing,
-                         eps::Real = 1e-5) =
-    compute_direct_jacobian!(stage.spec, env_ss, T, stage.buffer;
-                             inputs, outputs, eps)
+function compute_direct_ssj(stage::ChainStage, env_path::AbstractVector;
+                            input::Symbol, s::Int, Λ_0::AbstractArray, V_T::AbstractArray)
+    @assert !isempty(stage.spec.moments) "compute_direct_ssj: the chain has no moments attached; call define_moment! first."
+    @assert 1 ≤ s ≤ length(env_path) "compute_direct_ssj: shock date s = $s is outside the 1:$(length(env_path)) path."
+    TD    = ForwardDiff.Dual{HhsLiftTag, Float64, 1}
+    path  = [t == s ? _seed_env(env_path[t], (input,), TD) : env_path[t] for t in eachindex(env_path)]
+    res   = solve_transition_given_env_path!(stage, path; Λ_0, V_T=TD.(V_T))
+    names = Tuple(keys(stage.spec.moments))
+    return NamedTuple{names}(map(o -> [ForwardDiff.partials(m[o], 1) for m in res.moments_path], names))
+end
+
+"Refuse a block that is not a chain by name."
+compute_steady_state_gradient(stage::AbstractStage, args...; kwargs...) =
+    _derivative_service_setup("compute_steady_state_gradient", stage)
+compute_direct_ssj(stage::AbstractStage, args...; kwargs...) =
+    _derivative_service_setup("compute_direct_ssj", stage)

@@ -21,7 +21,7 @@ AggShock ∘ IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Attention
 | `IncomeShock` | `MarkovStage` | draw next idiosyncratic income on `:income` |
 | `Receipt` | `WealthChangeStage` | `b ↦ (1+r)·b + w·z·y` (aggregate `z` scales the wage) |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | pick next wealth `b'`, `c = b_in − b'`, CRRA |
-| `Attention` | `ScaleVarianceStage` | pick dispersion `θ` of `b' ↦ b' + θ·ξ` (ξ mean-zero) at cost `c(θ) = λ·θ²` |
+| `Attention` | `MeanPreservingSpreadStage` | pick the continuous dispersion `θ ∈ [0, θ_max]` of a Gaussian mean-preserving spread of `b'` (sd `θ`, clamped) at cost `c(θ) = λ·θ²` |
 
 The agent's one attention margin is precision about its own carried wealth state: `θ = 0` is perfect
 attention (no noise, no cost), larger `θ` is a noisier, cheaper read. The cost `c(θ) = λ·θ²` is a
@@ -33,8 +33,8 @@ The genuine Maćkowiak–Wiederholt mechanism is the **allocation of a finite at
 multiple signals** — aggregate vs idiosyncratic — coupling their precisions through **one** budget
 constraint. That **coupled multi-signal attention budget is a recorded ◐/G3-adjacent gap**
 (MODEL_CATALOG §2; gaps item 5): a single Shannon constraint over several precisions is **not one
-univariate streaming stage**. Each per-axis `ScaleVarianceStage` optimises its own `θ`
-independently — there is no shared-budget coupler in the per-axis streaming vocabulary that ties the
+univariate streaming stage**. Each per-axis `MeanPreservingSpreadStage` optimises its own `θ`
+independently — there is no shared-budget coupler in the per-axis vocabulary that ties the
 precision spent on `z` to the precision spent on the idiosyncratic state. Expressing it would need a
 coupled-constraint generalisation the library does not offer.
 
@@ -60,7 +60,7 @@ cost `λ·θ²` disciplines how much is taken.
   poorest decile, `θ*` = 0.0 (perfect attention) for the richest decile — the constrained poor hold
   the convex region where dispersion has option value.
 - **The RI comparative static.** Mean chosen dispersion falls monotonically as the information cost
-  `λ` rises (`θ̄* ≈ 0.32 → 0.31 → 0.26 → 0.17` for `λ = 0, 0.001, 0.01, 0.05`); the share of cells
+  `λ` rises (`θ̄* ≈ 0.35 → 0.35 → 0.30 → 0.20` for `λ = 0, 0.001, 0.01, 0.05`); the share of cells
   choosing positive dispersion shrinks with `λ`.
 
 Returns are exogenous (partial equilibrium): no market clears, so the outer loop is a single
@@ -70,5 +70,5 @@ stationary distribution.
 ## Literature
 
 Maćkowiak & Wiederholt (2009, AER); Maćkowiak & Wiederholt (2015, REStud); Sims (2003, JME),
-"Implications of Rational Inattention." The continuous-precision (KL/`ScaleVarianceStage`) sibling of
-the discrete-posterior (entropy/`LogitChoiceStage`) RI in `examples/discrete_ri`.
+"Implications of Rational Inattention." The continuous-precision (KL/`MeanPreservingSpreadStage`)
+sibling of the discrete-posterior (entropy/`LogitChoiceStage`) RI in `examples/discrete_ri`.

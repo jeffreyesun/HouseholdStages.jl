@@ -112,12 +112,8 @@ end
 """
 The Conesa–Krueger OLG household block: `replicate_age(IncomeShock ∘ Receipt+SS ∘
 ConsumptionSavings, N; axis = :age)` with a `mean_wealth` moment attached. The
-within-period chain and the `(wealth, income, age)` layout are inlined; the
-`:age` axis enters as a size-1 singleton (the product grows it to `N`). The
-payroll tax `τ` and benefit `b` ride the receipt closure, read out of the
-per-age `env` (net wage `(1−τ)·y(age)` for workers, benefit `b` for retirees);
-the finite-horizon backward+forward sweep and the PAYG balance fixed point live
-in `steady_state.jl`. Returns the moment-attached `ProductStage`.
+`:age` axis enters the layout as a size-1 singleton; `replicate_age` grows it to
+`N`, one slice per age.
 """
 function conesa_krueger_household(p = conesa_krueger_params)
     layout = GriddedLayout(
@@ -136,8 +132,8 @@ function conesa_krueger_household(p = conesa_krueger_params)
             (1 + env.r) * wealth + env.netwage * income + env.benefit) # defaults: (; axis = :wealth)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     age_chain = shock ∘ receipt ∘ savings
     hh = replicate_age(age_chain, p.N; axis = :age)

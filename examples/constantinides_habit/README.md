@@ -36,15 +36,13 @@ grows it `1→N_w` and `Forget` collapses it back.
 Constantinides subsistence wants felicity `= −∞` when `c − γS ≤ 0`. That cannot
 go through this pattern as-is, and the reason is precise and worth recording:
 
-- The auxiliary pattern grows the savings axis through a **`:brute`
-  `ArgmaxStage`** (`Choose`) — the only search that supports the rectangular
-  `1 → N_w` grow — and `:brute` **asserts that every origin cell has at least one
-  finite-reward action** (`argmax.jl`: *"every cell must have at least one
-  finite-reward action"*).
+- The auxiliary pattern grows the savings axis through a (brute)
+  **`ArgmaxStage`** (`Choose`), and an origin cell with **no finite-reward
+  action carries value `−∞`** (`argmax.jl`: the `typemin` masking convention).
 - The **minimum-wealth cell** structurally has `c = 0`: the cash-on-hand floor
   and the savings floor are the *same* grid point, so the most the agent can
   consume there is `x − b'_min = 0`. Under strict subsistence that cell's entire
-  column is `−∞` (`surplus = −γS ≤ 0`), and the assertion fires.
+  column is `−∞` (`surplus = −γS ≤ 0`), poisoning the value at the grid bottom.
 - `examples/habit` is immune **only** because Becker–Murphy `√c + α·c·S` is
   **finite at `c = 0`** (it returns `0`). A CRRA surplus is `−∞` there.
 

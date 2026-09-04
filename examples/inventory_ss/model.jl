@@ -46,8 +46,8 @@
 #              free; reordering UP to any higher target pays the FIXED cost `F` PLUS the per-unit
 #              purchase cost `c·(grid[i'] − grid[s])`; reducing the stock (i' < s) is infeasible
 #              (`−Inf`). The inaction band is the set of post-depletion stocks at which keeping beats
-#              every reorder. `search = :brute`: the fixed cost makes the reward NON-supermodular, so
-#              the monotone solve does not apply.
+#              every reorder. Brute argmax: the fixed cost makes the reward NON-supermodular (a
+#              monotone walk would mis-solve; the continuous stage's guard would refuse it).
 # `Discount` — TimeDiscountingStage, β = 1/(1+r), supplying β·V_end before the reorder argmax.
 #
 # Period timing (one firm): enter with stock `i` (last period's reorder target). Demand `d` realizes;
@@ -189,12 +189,13 @@ function inventory_firm(p = inventory_params)
     # (S,s) reorder reward on the inventory pair, M[i'(after), s(before)]: keeping the post-depletion
     # stock (i' = s, the diagonal) is free; reordering UP to a higher target pays the FIXED cost F PLUS
     # the per-unit purchase cost c·(grid[i'] − grid[s]); reducing the stock (i' < s) is infeasible.
-    # A plain (after, before) Matrix IS the normal ArgmaxStage reward; non-supermodular ⇒ :brute.
+    # A plain (after, before) Matrix IS the normal ArgmaxStage reward; non-supermodular, so the
+    # brute ArgmaxStage (not ContinuousArgmaxStage) is the right primitive.
     M = [ji == ii ? 0.0 :
          ji  > ii ? -(p.F + p.c * (i_grid[ji] - i_grid[ii])) :
          -Inf
          for ji in 1:p.N_i, ii in 1:p.N_i]                              # M[after, before]
-    reorder = ArgmaxStage(layout; reward = M, axis = :inventory, search = :brute) ∘
+    reorder = ArgmaxStage(layout; reward = M, axis = :inventory) ∘
               TimeDiscountingStage(layout; β = 1 / (1 + p.r))
 
     firm = demand ∘ profit ∘ deplete ∘ reorder

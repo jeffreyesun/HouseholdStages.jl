@@ -100,9 +100,8 @@ function entry_birth_household(p = entry_birth_params; birth_mass = 1 - p.s)
     )
     savings = ConsumptionSavingsStage(layout;
         β               = p.β,
-        utility         = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility         = (cell, c) -> u_crra(c, Val(p.σ)),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
     exit  = ExogenousExit(layout; survival = p.s, bequest = p.bequest)
     entry = EntryStage(layout; entry = g)

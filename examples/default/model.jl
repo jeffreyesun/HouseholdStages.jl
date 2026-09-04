@@ -81,10 +81,8 @@ const default_params = DefaultParams()
 """
 Build the default household block
 `IncomeShock ∘ DefaultChoice ∘ DebtReset ∘ Receipt ∘ Savings ∘ Readmission`, with
-`mean_assets = ∫ a dΛ` and `excluded_rate = ∫ 1{status = excluded} dΛ` attached. Five existing
-stages, no bespoke household stage: the repay/default branches are wired purely by composition and
-`cell.status`-reading wealth closures (the same pattern as BuyHomeStage ∘ WealthChangeStage), and
-the persistent exclusion spell is an ordinary `MarkovStage` on the status axis.
+`mean_assets = ∫ a dΛ` and `excluded_rate = ∫ 1{status = excluded} dΛ` attached. The repay/default
+branches are wired purely by composition and `cell.status`-reading wealth closures.
 """
 function default_household(p = default_params)
     layout = GriddedLayout(
@@ -95,20 +93,18 @@ function default_household(p = default_params)
 
     shock = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
 
-    # DefaultChoice: a good-standing agent (status 1) chooses repay (stay 1, score 0) or default
-    # (→ 2, score −χ); an EXCLUDED agent (status 2) is gated to remain excluded. The flat −χ is the
-    # per-period flow cost of exclusion; the heavier punishment (the income haircut, the discharged
-    # debt, the multi-period spell) is carried by the following branches and the readmission stage.
+    # DefaultChoice. The flat −χ is only the per-period flow cost of exclusion; the heavier
+    # punishment (the income haircut, the discharged debt, the multi-period spell) is carried by
+    # the following branches and the readmission stage.
     excl_gate(before, after) = before == 1 ? true : after == 2
     default = DefaultStage(layout; default_penalty = p.χ, avail = excl_gate) # defaults: (; axis = :status, default_index = 2)
 
-    # DebtReset: an excluded / defaulting agent carries zero assets (debt discharged); a
-    # good-standing repayer keeps `a`.
+    # DebtReset: defaulting discharges the debt.
     reset = WealthChangeStage(layout; axis = :wealth,
         wealth_post = (; status, wealth) -> status == 2 ? 0.0 : wealth)
 
-    # Receipt: cash-on-hand. An excluded agent earns the income haircut and has no debt to repay; a
-    # good-standing repayer earns `y` and services its debt (`a < 0`) out of cash-on-hand.
+    # Receipt: cash-on-hand. An excluded agent takes the Arellano output cost `(1−λ)·y` and has no
+    # debt to service; a good-standing repayer earns `y` and services `a < 0` out of it.
     receipt = WealthChangeStage(layout; axis = :wealth,
         wealth_post = (; status, income, wealth, env) ->
             status == 2 ? (1 - env.λ) * income
@@ -116,12 +112,11 @@ function default_household(p = default_params)
 
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-        axis    = :wealth) # defaults: (; utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+        axis    = :wealth) # defaults: (; utility_axes = nothing, skip_monotonicity_check = false)
 
-    # Readmission: an excluded agent (status 2) regains good standing (status 1) next period w.p. ψ;
-    # a good-standing agent stays good. The geometric exclusion spell is the persistent cost of
-    # default. `T[from, to]` is row-stochastic.
+    # Readmission: an excluded agent regains good standing next period w.p. ψ — the geometric
+    # exclusion spell that is the persistent cost of default. `T[from, to]` is row-stochastic.
     readmit = MarkovStage(layout; axis = :status,
         transition_matrix = [1.0 0.0; p.ψ (1 - p.ψ)])
 

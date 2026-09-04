@@ -146,7 +146,7 @@ function de_nardi_household(p = de_nardi_params)
         wealth_post = (; wealth, income, env) -> (1 + env.r) * wealth + env.y * income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
     # Warm-glow bequest over the assets `a'` carried into death; env-independent
     # (the exit composite materialises it once, against the wealth grid).

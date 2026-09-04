@@ -39,7 +39,7 @@ function marriage_life_cycle(p = marriage_params; verbosity = 1)
     hh      = marriage_household(p)
     m_axis  = GriddedContinuous(p.m_min, p.m_max, p.N_m)
     m_grid  = collect(Float64, axisvalues(m_axis))
-    cells   = cell_array(output_layout(hh))                 # (N_m, 2) cells: (:match_capital, :married)
+    cells   = cell_array(end_layout(hh))                 # (N_m, 2) cells: (:match_capital, :married)
 
     env_at(t) = (; R = p.R, a = efficiency_at_age(t, p))
 

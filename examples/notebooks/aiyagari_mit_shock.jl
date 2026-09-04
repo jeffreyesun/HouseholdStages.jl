@@ -5,15 +5,7 @@
 # Self-contained driver: depends only on `HouseholdStages`. Same
 # three-stage household chain as `aiyagari.jl`, augmented with a
 # permanent TFP step `A_t = A_0 > 1` for all `t ≥ 1` consumed by
-# `aiyagari_prices` during the transition. The walkthrough goes:
-#
-#   1. Parameters + state layout.
-#   2. Household chain.
-#   3. Pre-shock steady state at A = 1.
-#   4. Post-shock steady state at A = A_0 (the new long-run).
-#   5. MIT-shock transition (uses the library
-#      `solve_transition_given_env_path!` helper).
-#   6. Sequence-space Jacobian sketch.
+# `aiyagari_prices` during the transition.
 
 using HouseholdStages
 using Printf
@@ -48,9 +40,9 @@ function aiyagari_household(p::MITShockParams)
 
     shock   = MarkovStage(layout; axis = :income, transition_matrix = p.P_y)
     receipt = IncomeStage(layout)               # (1+r)·wealth + w·income, the standard receipt
-    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth, monotone_search = :divide_conquer)
+    savings = ConsumptionSavingsStage(layout;   # defaults: (; axis = :wealth)
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
     )
     return define_moments!(shock ∘ receipt ∘ savings;
         K_supplied = at_end(integrand = :wealth, reduce = sum),
@@ -75,7 +67,7 @@ p = MITShockParams()
 #--------------------------#
 
 hh   = aiyagari_household(p)
-dims = layout_size(input_layout(hh))
+dims = layout_size(start_layout(hh))
 
 @printf "Layout: wealth %d × income %d = %d cells\n" dims[1] dims[2] prod(dims)
 
@@ -127,9 +119,7 @@ ss_post = solve_ss(hh, p; A = A_0, K_init = ss_pre.K)
 # 5. MIT-Shock Transition — Library Driver #
 #------------------------------------------#
 
-# Perfect-foresight transition under a one-time unanticipated permanent
-# TFP step `A_0 = 1.05`. Inside the K-path tatonnement, each candidate
-# `K_path` defines an `env_path`; we hand that to the library's
+# Each candidate `K_path` defines an `env_path`, handed to the library's
 # `solve_transition_given_env_path!`, which allocates per-period chains
 # sharing the Spec, runs a backward sweep (terminal `V_T = V_ss_post`)
 # followed by a forward sweep (initial `Λ_0 = Λ_ss_pre`), and returns
@@ -186,32 +176,47 @@ println("  Residual history (last 5): ",
         round.(res_history[max(1, end - 4):end]; digits = 6))
 
 
-# 6. Sequence-Space-Jacobian Demo #
-#--------------------------------#
+# 6. Sequence-Space Jacobian #
+#----------------------------#
 
-# Uses the pre-shock SS kernels (re-seated at the SS env) and a unit
-# integrand `cell -> cell.wealth`. Assembles a 30×30 fake-news matrix.
+# `∂K_supplied_t/∂r_s` over a 30-period horizon at the pre-shock steady
+# state, by the fake-news algorithm. `expectation_vectors` is shown on
+# its own first — it is the driver's step 2, the `Kᵀ` recursion, and it
+# needs the kernels seated at the SS env, which the re-solve below does.
+# It is tight because the base point is the object being linearized
+# about, and the tatonnement above stops at its own aggregate `rtol`.
+# The driver solves for its own base point; this call is for the
+# `expectation_vectors` step, which runs ahead of it.
 
-println("\nSequence-space-Jacobian sketch at the pre-shock steady state (T_horizon = 30)…")
+println("\nSequence-space Jacobian at the pre-shock steady state (T_horizon = 30)…")
 ss_env = (; K = K_ss_pre, aiyagari_prices(K_ss_pre, 1.0, p)...)
-backward!(hh, V_ss_pre, ss_env)
-forward!(hh,  Λ_ss_pre)
+ss_tight = solve_steady_state_given_env!(hh, ss_env; vfi_tol = 1e-11, lambda_tol = 1e-11)
+V_ss_pre, Λ_ss_pre = ss_tight.V, ss_tight.Λ
 
 T_horizon = 30
 𝓔 = expectation_vectors(hh, cell -> cell.wealth, T_horizon)
 @printf "  produced %d expectation arrays of shape %s\n" length(𝓔) string(size(𝓔[1]))
 @printf "  ⟨𝓔[1], Λ_ss⟩ = %.4f  (≈ K_ss_pre = %.4f)\n" sum(𝓔[1] .* Λ_ss_pre) K_ss_pre
 
-curlyY = ones(T_horizon)
-curlyD = [zeros(Float64, dims...) for _ in 1:T_horizon]
-mid_w_idx = div(dims[1], 2)
-for t in 1:T_horizon
-    curlyD[t][mid_w_idx, 1]   =  1.0
-    curlyD[t][mid_w_idx, end] = -1.0
-end
-F = build_F(curlyY, curlyD, 𝓔[2:end])
-J = J_from_F(F)
-@printf "  F : %s ; J : %s\n" string(size(F)) string(size(J))
+# `mode = :dual` sweeps one tangent-seated Dual chain and is exact at
+# every anticipation distance; `mode = :fd` sweeps two primal lanes at
+# `env ± h` and is `O(h²)`. The deviation between them is the `:fd`
+# lane's own error, not a disagreement — see
+# `examples/aiyagari_mit_shock/ssj.jl`'s header for what sets its size.
+pair = (; inputs = (:r,), outputs = (:K_supplied,))
+J    = compute_fake_news_ssj(hh, ss_env, T_horizon; pair..., mode = :dual)
+J_fd = compute_fake_news_ssj(hh, ss_env, T_horizon; pair..., mode = :fd, h = 1e-5)
+@printf "  J : %s ; max|J| = %.4f\n" string(size(J)) maximum(abs, J)
+@printf "  max|J_dual - J_fd| = %.3e  at h = 1e-5\n" maximum(abs, J .- J_fd)
 @printf "  J[0, 0] = %+.6f, J[1, 0] = %+.6f, J[2, 0] = %+.6f\n" J[1, 1] J[2, 1] J[3, 1]
+
+# The permanent-shock comparative static is a different object, and the
+# package will not get it by differentiating the steady state — that is
+# a fixed point, refused at `_iterate_to_fixpoint`. It re-solves at
+# `env ± h` instead, so its accuracy floor is `lambda_tol` rather than
+# `h` and the package defaults are far too loose for it.
+∂ss = compute_steady_state_gradient(hh, ss_env; pair..., h = 3e-5,
+                                    vfi_tol = 1e-11, lambda_tol = 1e-11)
+@printf "  ∂K_supplied/∂r = %.4f  (permanent shock, re-solved to 1e-11)\n" ∂ss[(:r, :K_supplied)]
 
 println("\nDone.")

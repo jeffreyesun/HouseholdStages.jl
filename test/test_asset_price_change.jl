@@ -71,8 +71,8 @@ end
 end
 
 @testset "AssetPriceChangeStage — single-asset case (holdings_axis == wealth_axis)" begin
-    # Regression: `DepClosure((:wealth, :wealth), …)` → `NamedTuple{(:wealth, :wealth)}` threw
-    # "duplicate field name". The declared axes must be deduped when the asset IS the wealth axis.
+    # The asset IS the wealth axis, so the stage declares `(:wealth, :wealth)`. Dep discovery
+    # dedupes the repeated axis, and the closure reads the one key twice.
     layout = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0, 2.0, 3.0]), :z => Discrete([1.0, 2.0]))
     stage = AssetPriceChangeStage(layout; holdings_axis = :wealth, wealth_axis = :wealth)
     @test stage.spec.axis === :wealth

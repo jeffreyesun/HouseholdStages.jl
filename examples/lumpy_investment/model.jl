@@ -28,8 +28,8 @@
 #              `M[k', k] = −(k' − k) − F·1{k' ≠ k}`: keeping the level (k' = k, the diagonal)
 #              is free; moving to any other level pays the linear capital cost `(k' − k)` PLUS
 #              the fixed cost `F`. The inaction band is the set of (k, z) where re-tuning does
-#              not beat keeping. `search = :brute` (the default): the fixed cost makes the
-#              reward NON-supermodular, so the monotone solve does not apply.
+#              not beat keeping. Brute argmax: the fixed cost makes the reward NON-supermodular
+#              (a monotone walk would mis-solve; the continuous stage's guard would refuse it).
 # `Discount` — TimeDiscountingStage, β = 1/(1+r), supplying β·V_end before the argmax.
 #
 # The backward sweep reproduces the lumpy-investment Bellman
@@ -122,9 +122,10 @@ function lumpy_investment_firm(p = lumpy_investment_params)
     # (k' = k, the diagonal) costs nothing; jumping to any other level pays the FIXED cost F (the lump).
     # The per-period cost of the level itself is the user cost charged in `profit` above, so the only
     # adjustment friction here is F — the textbook (S,s) capital target/inaction structure. A plain
-    # (after, before) Matrix IS the normal ArgmaxStage reward parameterization; non-supermodular ⇒ :brute.
+    # (after, before) Matrix IS the normal ArgmaxStage reward parameterization; non-supermodular,
+    # so the brute ArgmaxStage (not ContinuousArgmaxStage) is the right primitive.
     M = [jk == ik ? 0.0 : -p.F for jk in 1:p.N_k, ik in 1:p.N_k]        # M[after, before]
-    invest = ArgmaxStage(layout; reward = M, axis = :k, search = :brute) ∘
+    invest = ArgmaxStage(layout; reward = M, axis = :k) ∘
              TimeDiscountingStage(layout; β = 1 / (1 + p.r))
 
     firm = shock ∘ profit ∘ invest

@@ -19,7 +19,7 @@ using Printf
 
 """
 Per-period adoption (replacement) rate: the mass that chooses ADOPT on entering the period.
-The stationary distribution `Λ_ss` is the chain's start-of-period law (input = output layout at the
+The stationary distribution `Λ_ss` is the chain's start-of-period law (start = end layout at the
 fixed point); push it through the leading `IncomeShock` to get the distribution entering `Choose`,
 then weight the `Choose` policy (`2` = adopt) by that distribution.
 """

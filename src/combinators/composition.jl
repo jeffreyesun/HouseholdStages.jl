@@ -1,11 +1,4 @@
-"""
-Composition of stages. Pure data: a flat tuple of component Specs
-and a mutable moments dict. Layout flows in at allocate time and
-chains through the components.
-
-The `moments` slot is the only mutable field on any Spec —
-`define_moment!(chain, name, spec)` extends it.
-"""
+"Specification of a time-ordered composition: the component specs, flattened, plus attached moments."
 struct ChainStageSpec{Stages<:Tuple} <: AbstractStageSpec
     stages  :: Stages
     moments :: Dict{Symbol, Any}
@@ -18,10 +11,7 @@ function ChainStageSpec(stages::Tuple;
     return ChainStageSpec{typeof(flat)}(flat, moments)
 end
 
-"""
-Flatten any nested `ChainStageSpec` components in a tuple. Single-level
-walk; relies on `ChainStageSpec` already being flat.
-"""
+"Flatten nested `ChainStageSpec` components into one tuple of leaf specs."
 function _flatten_chain_specs(stages::Tuple)
     out = AbstractStageSpec[]
     for s in stages
@@ -31,44 +21,64 @@ function _flatten_chain_specs(stages::Tuple)
     return Tuple(out)
 end
 
+# Construction #
+#--------------#
+
+"One `nothing` per component."
+_no_interiors(components::Tuple) = ntuple(_ -> nothing, length(components))
+
+"What a built stage needs to be rebuilt beyond its two layouts. A primitive needs nothing."
+_component_interior(::AbstractPrimitiveStage) = nothing
+
+"Build one component between the two layouts it spans, from its spec and its `interior`."
+_bundle_between(spec::AbstractStageSpec, l_start, l_end, ::Nothing, ::Type{T}) where {T} =
+    bundle(spec, l_start, l_end, T)
+
 """
-Chain buffer: a tuple of bundled per-component sub-stages, driven through the per-stage
-sugar so the chain is agnostic to each component's protocol (legacy or modern). The
-chain's `input_layout` mirrors the first component, `output_layout` the last.
+The built form of a chain: its sub-stages, the `n+1` layouts between them (component `k` runs from
+`boundaries[k]` to `boundaries[k+1]`), and each component's interior.
 """
-struct ChainStageBuffer{Stages<:Tuple, LIn, LOut} <: AbstractStageBuffer
-    stages        :: Stages
-    input_layout  :: LIn
-    output_layout :: LOut
+struct ChainStageBuffer{Stages<:Tuple, B<:Tuple, I<:Tuple} <: AbstractStageBuffer
+    stages     :: Stages
+    boundaries :: B
+    interiors  :: I
 end
 
-"Chain stage: a tuple of bundled sub-stages composed via `∘`."
-struct ChainStage{Spec<:ChainStageSpec, Buffer<:ChainStageBuffer} <: AbstractLegacyStage
+ChainStageBuffer(stages::Tuple, boundaries::Tuple) =
+    ChainStageBuffer(stages, boundaries, map(_component_interior, stages))
+
+start_layout(buffer::ChainStageBuffer) = first(buffer.boundaries)
+end_layout(buffer::ChainStageBuffer)   = last(buffer.boundaries)
+
+"Stages run one after another in time, as built by `∘`."
+struct ChainStage{Spec<:ChainStageSpec, Buffer<:ChainStageBuffer} <: AbstractCompositeStage
     spec   :: Spec
     buffer :: Buffer
 end
 
-function ChainStage(stages::Tuple)
-    @assert !isempty(stages)
-    if all(s -> s isa AbstractStage, stages)
-        sub_stages = _flatten_chain_stages(stages)
-        spec = ChainStageSpec(map(s -> s.spec, sub_stages))
-        buf  = ChainStageBuffer(sub_stages,
-                                input_layout(sub_stages[1]),
-                                output_layout(sub_stages[end]))
-        return ChainStage{typeof(spec), typeof(buf)}(spec, buf)
-    elseif all(s -> s isa AbstractStageSpec, stages)
-        return ChainStage(ChainStageSpec(stages))
-    else
-        error("ChainStage components must be uniformly AbstractStage or AbstractStageSpec")
-    end
+"The `n+1` layouts the chain's components sit between."
+boundaries(chain::ChainStage) = chain.buffer.boundaries
+
+_component_interior(chain::ChainStage) =
+    (boundaries = boundaries(chain), interiors = interiors(chain))
+
+_bundle_between(spec::ChainStageSpec, l_start, l_end, interior::NamedTuple, ::Type{T}) where {T} =
+    ChainStage(spec, (l_start, interior.boundaries[2:end-1]..., l_end), interior.interiors, T)
+
+function ChainStage(stages::Tuple{AbstractStage, Vararg{AbstractStage}})
+    sub_stages = _flatten_chain_stages(stages)
+    spec = ChainStageSpec(map(s -> s.spec, sub_stages))
+    buf  = ChainStageBuffer(sub_stages, _component_boundaries(sub_stages))
+    return ChainStage{typeof(spec), typeof(buf)}(spec, buf)
 end
 
-"""
-Flatten a tuple of bundled stages into one flat tuple of leaf sub-stages, unpacking
-any nested `ChainStage` (whose `buffer.stages` are themselves leaf sub-stages).
-Preserves the original leaf stages — no reallocation.
-"""
+ChainStage(stages::Tuple{AbstractStageSpec, Vararg{AbstractStageSpec}}) =
+    ChainStage(ChainStageSpec(stages))
+
+ChainStage(::Tuple{}) = throw(AssertionError("ChainStage: a chain needs at least one component."))
+ChainStage(::Tuple)   = error("ChainStage components must be uniformly AbstractStage or AbstractStageSpec")
+
+"Flatten a tuple of bundled stages into one tuple of leaf sub-stages, reused as they stand."
 function _flatten_chain_stages(stages::Tuple)
     out = AbstractStage[]
     for s in stages
@@ -77,55 +87,44 @@ function _flatten_chain_stages(stages::Tuple)
     return Tuple(out)
 end
 
-ChainStage(spec::ChainStageSpec) = error("ChainStage(spec) needs a layout; call ChainStage(spec, layout) or compose bundled stages with `∘`.")
-ChainStage(spec::ChainStageSpec, layout::GriddedLayout) =
-    ChainStage(spec, allocate(spec, layout))
-
-bundle(spec::ChainStageSpec, layout::GriddedLayout) = ChainStage(spec, layout)
-bundle(spec::ChainStageSpec, layout::GriddedLayout, ::Type{T}) where {T} =
-    ChainStage(spec, allocate(spec, layout, T))
-
-# Allocate — bundle components, chaining layouts #
-#------------------------------------------------#
-
-function allocate(spec::ChainStageSpec, layout::GriddedLayout,
-                  ::Type{T}=Float64) where {T}
-    sub_stages, out_layout = _allocate_chain_stages(spec.stages, layout, T)
-    return ChainStageBuffer(sub_stages, layout, out_layout)
+"The `n+1` boundaries of built components, asserting adjacency: `k`'s end layout is `k+1`'s start."
+function _component_boundaries(stages::Tuple)
+    bounds = (map(start_layout, stages)..., end_layout(last(stages)))
+    for (k, s) in enumerate(stages)
+        @assert end_layout(s) == bounds[k + 1] "ChainStage: component $k ($(typeof(s).name.name)) ends on a layout its successor does not start from."
+    end
+    return bounds
 end
 
-"""
-Sequentially bundle component stages, threading each component's `output_layout`
-into the next component's input (decision 7: a component may change levels, e.g.
-ForgetfulSum). Returns the tuple of sub-stages and the chain's terminal output layout.
-"""
-function _allocate_chain_stages(specs::Tuple, layout::GriddedLayout, T::Type)
-    cur    = layout
-    stages = AbstractStage[]
-    for s in specs
-        stg = bundle(s, cur, T)
-        push!(stages, stg)
-        cur = output_layout(stg)
-    end
-    return Tuple(stages), cur
+ChainStage(spec::ChainStageSpec) = error("ChainStage(spec) needs layouts; call ChainStage(spec, boundaries) or compose bundled stages with `∘`.")
+
+"Build each component between its own pair of adjacent boundaries."
+function ChainStage(spec::ChainStageSpec, boundaries::Tuple,
+                    interiors::Tuple=_no_interiors(spec.stages), ::Type{T}=Float64) where {T}
+    n = length(spec.stages)
+    @assert length(boundaries) == n + 1 "ChainStage: a $n-component chain takes $(n + 1) boundary layouts; got $(length(boundaries))."
+    @assert length(interiors) == n "ChainStage: one interior per component ($n); got $(length(interiors))."
+    stages = ntuple(k -> _bundle_between(spec.stages[k], boundaries[k], boundaries[k + 1],
+                                         interiors[k], T), n)
+    return ChainStage(spec, ChainStageBuffer(stages, boundaries))
+end
+
+"Build a chain from its two end layouts, which must be equal; every boundary is then that layout."
+function bundle(spec::ChainStageSpec, l_start::AbstractLayout, l_end::AbstractLayout,
+                ::Type{T}=Float64) where {T}
+    n = length(spec.stages)
+    @assert l_start == l_end "ChainStage: a chain that regrids is not determined by its two ends — pass the full $(n + 1)-long boundary sequence."
+    return ChainStage(spec, ntuple(_ -> l_start, n + 1), _no_interiors(spec.stages), T)
 end
 
 # Env slice — union over components #
 #-----------------------------------#
 
-"The set of `env` fields the chain's backward/forward needs (union over components)."
-chain_env_names(spec::ChainStageSpec) = _union_env_slices(spec.stages)
-chain_env_names(chain::ChainStage) = chain_env_names(chain.spec)
+effective_env_slice(spec::ChainStageSpec) = _union_env_slices(spec.stages)
+tangent_grade(spec::ChainStageSpec)        = _worst_grade(map(tangent_grade, spec.stages))
 
-effective_env_slice(spec::ChainStageSpec) = chain_env_names(spec)
-
-function validate_env(spec::ChainStageSpec, env)
-    needed = chain_env_names(spec)
-    missing_keys = Symbol[k for k in needed if !haskey(env, k)]
-    isempty(missing_keys) ||
-        error("env is missing required fields: $missing_keys; provided: $(keys(env))")
-    return nothing
-end
+"The `env` fields a chain's sweeps read."
+chain_env_names(chain::Union{ChainStage, ChainStageSpec}) = effective_env_slice(chain)
 
 # Endpoint accessors #
 #--------------------#
@@ -133,12 +132,7 @@ end
 V_start_buffer(stage::ChainStage) = V_start_buffer(stage.buffer.stages[1])
 Λ_end_buffer(stage::ChainStage)   = Λ_end_buffer(stage.buffer.stages[end])
 
-"""
-The policy of a composite: the policy of its unique policy-bearing leaf; errors unless exactly one
-leaf carries a `policy`. A derived choice stage (`ConsumptionSavingsStage`, `CapitalInvestmentStage`, …) is
-a `ChoiceStage ∘ TimeDiscountingStage` chain, so `policy` reaches through the trailing discount to
-the argmax/logit leaf.
-"""
+"The policy of the chain's one policy-bearing leaf component; errors unless there is exactly one."
 function policy(chain::ChainStage)
     leaves = filter(s -> !(s isa ChainStage) && hasmethod(policy, Tuple{typeof(s)}),
                     collect(chain.buffer.stages))
@@ -147,68 +141,33 @@ function policy(chain::ChainStage)
     return policy(leaves[1])
 end
 
-# Backward sweep — type-stable via @generated #
-#--------------------------------------------#
-# Heterogeneous component tuple — a runtime `n:-1:1` loop on the tuple is
-# type-unstable. `@generated` unrolls. Each component is driven through the
-# per-stage sugar `backward!(stage, V, env; env_changed)`, uniform across
-# legacy/modern; the chain just threads `env_changed` to every component.
+# Sweeps — a fold over the components #
+#-------------------------------------#
 
-@generated function backward!(buffer::ChainStageBuffer{Stages},
-                              spec::ChainStageSpec, V_end, env;
-                              env_changed::Bool = true) where {Stages<:Tuple}
-    N = length(Stages.parameters)
-    calls = [:(V = backward!(buffer.stages[$i], V, env; env_changed)) for i in N:-1:1]
-    return quote
-        V = V_end
-        $(calls...)
-        return V
-    end
-end
+backward!(buffer::ChainStageBuffer, ::ChainStageSpec, V_end, env; env_changed::Bool = true) =
+    foldr((s, V) -> backward!(s, V, env; env_changed), buffer.stages; init = V_end)
 
-# Forward sweep #
-#---------------#
-
-@generated function forward!(buffer::ChainStageBuffer{Stages},
-                             spec::ChainStageSpec, Λ_start) where {Stages<:Tuple}
-    N = length(Stages.parameters)
-    calls = [:(Λ = forward!(buffer.stages[$i], Λ)) for i in 1:N]
-    return quote
-        Λ = Λ_start
-        $(calls...)
-        return Λ
-    end
-end
+forward!(buffer::ChainStageBuffer, ::ChainStageSpec, Λ_start) =
+    foldl((Λ, s) -> forward!(s, Λ), buffer.stages; init = Λ_start)
 
 # Composition operators #
 #-----------------------#
 
 """
-Left-to-right (time-ordered) stage composition: `s1` runs first — the **opposite**
-of Julia's `∘` on functions. Auto-flattens nested chains; refuses to compose
-chains that already carry moments.
+Time-ordered composition: `a` runs first, the opposite of `Base.∘` on functions. Nested chains
+flatten, and a chain that already carries moments cannot be composed.
 """
 Base.:∘(a::AbstractStageSpec, b::AbstractStageSpec) =
     ChainStageSpec(_compose_spec_tuples(a, b))
 
 Base.:∘(a::AbstractStage, b::AbstractStage) = ChainStage((a, b))
 
-function _compose_spec_tuples(a::AbstractStageSpec, b::AbstractStageSpec)
-    if a isa ChainStageSpec
-        _assert_no_moments(a, "left")
-        if b isa ChainStageSpec
-            _assert_no_moments(b, "right")
-            return (a.stages..., b.stages...)
-        else
-            return (a.stages..., b)
-        end
-    elseif b isa ChainStageSpec
-        _assert_no_moments(b, "right")
-        return (a, b.stages...)
-    else
-        return (a, b)
-    end
-end
+"What an operand of `∘` contributes to the flat tuple: a chain its components, a leaf itself."
+_spec_operand(spec::ChainStageSpec, side)    = (_assert_no_moments(spec, side); spec.stages)
+_spec_operand(spec::AbstractStageSpec, side) = (spec,)
+
+_compose_spec_tuples(a::AbstractStageSpec, b::AbstractStageSpec) =
+    (_spec_operand(a, "left")..., _spec_operand(b, "right")...)
 
 _assert_no_moments(spec::ChainStageSpec, side::AbstractString) =
     @assert isempty(spec.moments) "∘: cannot compose a ChainStageSpec that already has moments on its $side; call define_moment! last."

@@ -20,7 +20,7 @@
 #                  insurance coverage; `θ = 1` fully insures (stay on the
 #                  no-loss kernel), `θ = 0` is uninsured exposure. The closed
 #                  form is `V = K_B·V + c*(K_A·V − K_B·V)` (Fenchel conjugate
-#                  of the premium) — see `src/stages/derived/mixing.jl`.
+#                  of the premium) — see `src/stages/derived/lottery_mixing.jl`.
 # `Receipt`      — `WealthChangeStage` `a ↦ (1+r)·a + w·y` (cash-on-hand x):
 #                  return on the post-loss asset stock plus labour income.
 # `ConsumptionSavings` — `ConsumptionSavingsStage` picks next-period wealth
@@ -99,10 +99,8 @@ end
 
 """
 Build the insurance household block `IncomeShock ∘ Insurance ∘ Receipt ∘ ConsumptionSavings`, with
-`mean_wealth = ∫ wealth dΛ` attached. Four existing stages, no bespoke household stage: the
-insurance choice is `MixingStage(K_A = I, K_B = loss)` blending the no-loss and loss wealth
-kernels at convex cost. The insurance stage sits on beginning-of-period asset wealth (before
-receipt) — the loss hits the asset stock, and the post-receipt gather lifts the savings-floor
+`mean_wealth = ∫ wealth dΛ` attached. The insurance stage sits on beginning-of-period asset wealth,
+before receipt: the loss hits the asset stock, and the post-receipt gather lifts the savings-floor
 `-Inf` away from the mixing closed form.
 """
 function insurance_household(p = insurance_params)
@@ -120,8 +118,8 @@ function insurance_household(p = insurance_params)
         cost_curvature = p.cost_curvature)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
-    ) # defaults: (; axis = :wealth, utility_axes = nothing, monotone_search = :divide_conquer, assume_monotone = false)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
+    ) # defaults: (; axis = :wealth, utility_axes = nothing, skip_monotonicity_check = false)
 
     hh = shock ∘ insurance ∘ receipt ∘ savings
     return define_moments!(hh; mean_wealth = at_end(integrand = :wealth, reduce = sum))

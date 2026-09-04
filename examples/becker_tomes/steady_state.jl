@@ -26,7 +26,7 @@ function bt_next_generation(hh, b::Real, h::Real, bgrid, hgrid, sz)
     Λ  = zeros(sz); Λ[ib, ih, 1] = 1.0
     Λ′ = forward!(hh, Λ)
     m  = sum(Λ′)
-    cells = cell_array(output_layout(hh))
+    cells = cell_array(end_layout(hh))
     mean_b = sum(getproperty.(cells, :wealth) .* Λ′) / m
     mean_h = sum(getproperty.(cells, :h)      .* Λ′) / m
     return (; mean_b, mean_h)
@@ -46,7 +46,7 @@ function becker_tomes_steady_state(p = becker_tomes_params; verbosity = 1)
 
     bgrid = collect(Float64, axisvalues(GriddedContinuous(0.0, p.b_max, p.N_b; spacing = :log)))
     hgrid = collect(range(p.h_min, p.h_max; length = p.N_h))
-    sz    = layout_size(input_layout(hh))
+    sz    = layout_size(start_layout(hh))
 
     # Re-seat the converged policy (stationary ⇒ continuation V_end = V_start), then
     # trace the cross-generation HC map at a fixed (median) bequest.

@@ -40,7 +40,6 @@ function ks_household(p = ks_params)
         β               = p.β,
         utility         = (cell, c; env) -> u_crra(c, Val(p.γ)),
         axis            = :wealth,
-        monotone_search = :divide_conquer,
     )
 
     hh = shock ∘ receipt ∘ savings

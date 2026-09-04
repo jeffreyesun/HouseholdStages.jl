@@ -12,10 +12,9 @@ using .HouseholdStages: BackwardScale, axis_position, forward!, backward!,
 
 pairing(a, b) = sum(a .* b)
 
-# Build a `DenseKernel` + its gather scratch from a compact fiber `Kc` (n_out, n_in,
-# dep_sizes…), exactly as a stage's allocate_kernel/allocate_scratch would: a `MatrixField` over
-# the compact array (operative-axis/dep metadata explicit) wrapped in a `DenseKernel`, plus the
-# kernel's derived gather plan. Shared by test_transition_flexibility.jl (same module scope).
+# Build a `DenseKernel` and its gather scratch from a compact fiber `Kc` (n_out, n_in, dep_sizes…),
+# exactly as a stage's `allocate_kernel`/`allocate_scratch` would. Shared with
+# `test_transition_flexibility.jl`, which runs in the same module scope.
 function dense_kernel(Kc, layout, axis; dep = ())
     n_out, n_in = size(Kc, 1), size(Kc, 2)
     dep_sizes = size(Kc)[3:end]
@@ -24,7 +23,7 @@ function dense_kernel(Kc, layout, axis; dep = ())
     field     = MatrixField(array, axis, axis_position(layout, axis),
                             Tuple(axis_position(layout, a) for a in dep))
     kernel    = DenseKernel(field)
-    return (kernel = kernel, scratch = kernel_scratch(kernel, layout, eltype(Kc)))
+    return (kernel = kernel, scratch = kernel_scratch(kernel, layout, layout, eltype(Kc)))
 end
 
 dbwd(dest, d, src) = backward!(dest, d.kernel, src; scratch = d.scratch)
@@ -177,6 +176,45 @@ end
           dbwd(similar(src), d, src) atol = 1e-12
 end
 
+@testset "Generic stratified_apply! reference path == DenseKernel single-fiber fast path" begin
+    # A dep-free field is one fiber, so the fast path multiplies plain matrices rather than a
+    # batch. Every fiber shape the dense kernel treats as first-class — square, rectangular, a row
+    # (forget) and a column (introduce) — in both geometries: operative axis leading (reshape, no
+    # gather) and trailing (gather), and both verbs.
+    mulop(out, mat, vec) = (out .= mat * vec)
+    fibers = ([0.5 0.1 0.4; 0.3 0.6 0.1; 0.2 0.3 0.5],   # 3×3, square
+              [0.5 0.1 0.4; 0.3 0.6 0.1],                # 2×3, rectangular
+              [0.5 0.1 0.4],                             # 1×3, row: forgets the axis
+              reshape([0.5, 0.3, 0.2], 3, 1))            # 3×1, column: introduces it
+    for K in fibers, leading in (true, false)
+        n_out, n_in = size(K)
+        # The layout carries the wider end, so one gather scratch serves both verbs.
+        grid   = GriddedContinuous(collect(0.0:(max(n_out, n_in) - 1.0)))
+        other  = Discrete([1.0, 2.0])
+        layout = leading ? GriddedLayout(:wealth => grid, :n => other) :
+                           GriddedLayout(:n => other, :wealth => grid)
+        d      = dense_kernel(K, layout, :wealth)
+        shape(n) = leading ? (n, 2) : (2, n)
+        for (mode, apply!, n_src, n_dst) in ((:covariant, dfwd, n_in, n_out),
+                                             (:contravariant, dbwd, n_out, n_in))
+            src = randn(shape(n_src)...)
+            @test HS.stratified_apply!(zeros(shape(n_dst)...), mulop, d.kernel.field, src; mode) ≈
+                  apply!(zeros(shape(n_dst)...), d, src) atol = 1e-12
+        end
+    end
+
+    # A dep axis of *size* 1 is still one fiber, so it takes the same fast path with a 3-D fiber
+    # array to flatten rather than the 2-D one a dep-free field supplies.
+    layout = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0, 2.0]), :age => Discrete([1.0]))
+    Ks = reshape([0.5 0.1 0.4; 0.3 0.6 0.1; 0.2 0.3 0.5], 3, 3, 1)
+    d  = dense_kernel(Ks, layout, :wealth; dep = (:age,))
+    for (mode, apply!) in ((:covariant, dfwd), (:contravariant, dbwd))
+        src = randn(3, 1)
+        @test HS.stratified_apply!(zeros(3, 1), mulop, d.kernel.field, src; mode) ≈
+              apply!(zeros(3, 1), d, src) atol = 1e-12
+    end
+end
+
 @testset "InterpKernel off-grid (right overflow) — exact transpose pair" begin
     # A continuous wealth axis crossed with a discrete :z, so the move acts per z-slice (the
     # real multi-axis use; also dodges the 1-D `eachslice` empty-dims edge). Some destinations
@@ -193,7 +231,8 @@ end
                     3.5 2.5;    # (3,1) overflows
                     4.0 5.0]    # (4,1), (4,2) overflow
     k       = InterpKernel(destinations, Val(1))
-    scratch = HS.kernel_scratch(k, layout, Float64)
+    scratch = HS.kernel_scratch(k, layout, layout, Float64)
+    HS.seat_interp!(k, scratch.dest_grid)          # the pair the two verbs then share
 
     # Materialise K (forward) and B (backward) over the flattened state by pushing basis vectors.
     N  = n * nz
@@ -205,8 +244,10 @@ end
         B[:, j]  = vec(backward!(zeros(n, nz), k, E; scratch))
     end
 
-    # The backward gather is the EXACT transpose of the forward Young-split (the K/Kᵀ identity),
-    # off-grid included — this is what the right-clamp restores.
+    # The backward gather is the transpose of the forward split (the K/Kᵀ identity), off-grid
+    # included — one seated pair per cell, so both verbs bracket the same two nodes. The weight on
+    # that pair is two algebraically-equal expressions of the same operands, so the identity is
+    # exact in the bracket and holds to rounding in the weight.
     @test B ≈ transpose(Kf)
 
     # Forward Young weights are nonnegative and mass-conserving (each source column sums to 1).

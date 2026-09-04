@@ -1,50 +1,37 @@
 # LogitChoiceKernel — the Gumbel-logit transition's data #
 #=======================================================#
-# The kernel half of the logit-choice stage (the stage proper lives in
-# stages/primitive/logit_choice.jl). The operator is the Gibbs/Luce form
-# `π(j|i,s) = eψC[i,j]·value_weight[j,s]/normalizer[i,s]`, with `eψC = exp(−C/ε)` held as a contained
-# `DenseKernel` over the cost `MatrixField`, so the contraction reuses that kernel's field, plan, and
-# batched-mul fast path (end-goal §8.1). The stage's backward seats `eψC`, `value_weight`, and
-# `normalizer`; this file owns the data and the two verbs `forward! = K·`, `backward! = Kᵀ·`.
+# The operator is the Gibbs/Luce form `π(j|i,s) = eψC[j,i]·value_weight[j,s]/normalizer[i,s]`, with
+# the cost factor `eψC = exp(−Cᵀ/ε)` held as a contained `DenseKernel`.
 
 """
-The Gumbel-logit transition's data, applying the Gibbs/Luce operator
-`π(j|i,s) = eψC[i,j]·value_weight[j,s]/normalizer[i,s]`: the frozen `eψC = exp(−C/ε)` as a contained
-`DenseKernel` over its cost `MatrixField`, plus the `value_weight` and `normalizer` buffers (both
-layout-shaped) seated by the stage `backward!`.
+The Gumbel-logit transition's three factors: the cost `eψC = exp(−Cᵀ/ε)` as a contained
+`DenseKernel`, plus two layout-shaped buffers the stage's `backward!` fills.
 """
 struct LogitChoiceKernel{M, D<:AbstractArray}
-    eψC          :: M    # exp(−C/ε): a contained DenseKernel over the cost field (origin, dest, deps…)
+    eψC          :: M    # exp(−Cᵀ/ε): a contained DenseKernel over the cost field (dest, origin, deps…)
     value_weight :: D    # exp((V−maxⱼV)/ε)[j,s]: per-(dest, state) softmax numerator, layout-shaped
-    normalizer   :: D    # (Σⱼ eψC[i,j]·value_weight[j,s])[i,s]: per-(origin, state) denominator, layout-shaped
+    normalizer   :: D    # (Σⱼ eψC[j,i]·value_weight[j,s])[i,s]: per-(origin, state) denominator, layout-shaped
 end
 
-"The logit kernel's apply plan: the `eψC` gather scratch + a flat `tmp` the K/Kᵀ verbs stage the diagonal scalings through (sized for the larger of origin/dest — `tmp` is `src`-shaped, viewed per call)."
-kernel_scratch(k::LogitChoiceKernel, layout::GriddedLayout, ::Type{T}) where {T} =
-    merge(kernel_scratch(k.eψC, layout, T), (tmp = zeros(T, max(length(k.value_weight), length(k.normalizer))),))
+"The `eψC` gather scratch plus a flat `tmp` the two verbs stage their diagonal scalings through, viewed `src`-shaped per call."
+kernel_scratch(k::LogitChoiceKernel, start_layout::GriddedLayout, end_layout::GriddedLayout, ::Type{T}) where {T} =
+    merge(kernel_scratch(k.eψC, start_layout, end_layout, T),
+          (tmp = zeros(T, max(length(k.value_weight), length(k.normalizer))),))
 
-# The kernel's two verbs — `forward! = K·`, `backward! = Kᵀ·` — for the Gibbs operator
-# `K = diag(value_weight)·eψCᵀ·diag(1/normalizer)`. The primal mass push and the lift adjoints both
-# route through them; `tmp` stages the diagonal scalings.
-
-"""
-Apply `K· = value_weight ⊙ (eψCᵀ·(src ./ normalizer))` (the Gibbs mass-push operator).
-"""
+"Push mass: `K· = value_weight ⊙ (eψC·(src ./ normalizer))`."
 function forward!(dest, k::LogitChoiceKernel, src; scratch)
-    tmp = reshape(view(scratch.tmp, 1:length(src)), size(src))  # src-shaped (origin side)
+    tmp = reshape(view(scratch.tmp, 1:length(src)), size(src))  # origin-shaped
     @. tmp = src / k.normalizer
-    backward!(dest, k.eψC, tmp; scratch = scratch)              # eψCᵀ · (src ./ normalizer)
+    forward!(dest, k.eψC, tmp; scratch = scratch)
     @. dest = k.value_weight * dest
     return dest
 end
 
-"""
-Apply `Kᵀ· = (eψC·(value_weight ⊙ src)) ./ normalizer` (the value-pullback operator).
-"""
+"Pull value back: `Kᵀ· = (eψCᵀ·(value_weight ⊙ src)) ./ normalizer`."
 function backward!(dest, k::LogitChoiceKernel, src; scratch)
-    tmp = reshape(view(scratch.tmp, 1:length(src)), size(src))  # src-shaped (dest side)
+    tmp = reshape(view(scratch.tmp, 1:length(src)), size(src))  # destination-shaped
     @. tmp = k.value_weight * src
-    forward!(dest, k.eψC, tmp; scratch = scratch)               # eψC · (value_weight ⊙ src)
+    backward!(dest, k.eψC, tmp; scratch = scratch)
     @. dest = dest / k.normalizer
     return dest
 end

@@ -5,7 +5,7 @@
 # Returns are exogenous, so there is no market to clear: the outer loop is a
 # single inner V/Λ fixed-point solve at the given env. The whole point is that
 # the household block is library stages only — the attention leaf is a
-# `ScaleVarianceStage`, no bespoke household stage. See `model.jl`. The report
+# `MeanPreservingSpreadStage`, no bespoke household stage. See `model.jl`. The report
 # shows the MW single-margin attention gradient: θ*(x) is HIGH for the
 # constrained poor (option value near the borrowing constraint) and → 0 for the
 # wealthy, and falls everywhere as the information cost λ rises.
@@ -40,7 +40,7 @@ function mw_steady_state(p = mw_params; r = p.r, w = p.w, λ = p.λ, verbosity =
         @printf "Single-margin MW steady state (r = %.3f, w = %.2f, σ = %.1f, λ = %.4f)\n" r w p.σ λ
         @printf "  mass(Λ)             = %.6f\n"     sum(res.Λ)
         @printf "  mean wealth         = %.4f\n"     m.mean_wealth
-        @printf "  dispersion θ*       = [%.2f, %.2f], grid-mean %.3f\n" θ_lo θ_hi θ_mean
+        @printf "  dispersion θ*       = [%.2f, %.2f], cell-mean %.3f\n" θ_lo θ_hi θ_mean
         @printf "  frac(θ* > 0)        = %.3f  (rest choose perfect attention)\n" attentive_frac
         @printf "  attention gradient  : poor θ* = %.3f, rich θ* = %.3f  (poor attend less precisely)\n" θ_poor θ_rich
         @printf "  VFI iters = %d, Λ iters = %d\n" res.history.vfi_iters res.history.lambda_iters

@@ -126,7 +126,7 @@ function vintage_replacement_household(p = vintage_replacement_params)
 
     shock = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     # Reward 0: the argmax just picks the higher of the two continuations (keep vs adopt).
-    choose = ArgmaxStage(full; axis = :adopt_choice, reward = zeros(2, 1))
+    choose = ArgmaxStage(block, full; axis = :adopt_choice, reward = zeros(2, 1))
     setvintage = WealthChangeStage(full; axis = :vintage,                       # adopt → reset to v_top
         wealth_post = (; vintage, adopt_choice) -> adopt_choice == 2 ? v_top : vintage)
     receipt = WealthChangeStage(full; axis = :wealth,                           # cash-on-hand on post-adoption vintage
@@ -136,7 +136,7 @@ function vintage_replacement_household(p = vintage_replacement_params)
     forget = ForgetfulSumStage(full; axis = :adopt_choice)
     savings = ConsumptionSavingsStage(block;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),                        # defaults: (; axis = :wealth)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),                        # defaults: (; axis = :wealth)
     )
     depreciate = MarkovStage(block; axis = :vintage,
         transition_matrix = vintage_depreciation_matrix(p))

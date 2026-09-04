@@ -11,9 +11,9 @@
 # an exogenous separation rate `δ`. Quits occur at low `z` — the Mortensen–Pissarides
 # (1994) reservation-productivity margin.
 #
-# The within-period problem decomposes into five stages, in time order (left → right):
+# The within-period problem decomposes into six stages, in time order (left → right):
 #
-#     QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Matching
+#     QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Separation ∘ Matching
 #
 # - `QuitChoice` (`ArgmaxStage` on the 2-level `:emp` axis) — the (max,+) keep/quit
 #   choice. The reward `M[after, before]` GATES with `-Inf`: from an EMPLOYED origin
@@ -28,9 +28,20 @@
 # - `ZShock` (`MarkovStage` on `:z`) — match productivity follows a persistent
 #   (Rouwenhorst-discretized AR(1)) chain. New hires inherit their current `z` cell
 #   (stylized — matching does not touch `:z`).
-# - `Matching` (`SearchMatchingStage` on `:emp`) — the unemployed choose search effort
-#   `e`, pay `cost(e)`, and find a job w.p. `job_finding(e, θ)` at fixed tightness `θ`;
-#   the employed separate EXOGENOUSLY at rate `δ`. (Partial equilibrium: `θ` fixed.)
+# - `Separation ∘ Matching` — ONE library call: `SearchMatchingStage` (derived sugar)
+#   expands to `MarkovStage(separation) ∘ MixingStage(job-search lottery)`; chains
+#   flatten, so the two leaves are unchanged. `Separation`: the employed separate
+#   EXOGENOUSLY at rate `δ` (transition `[1 0; δ 1−δ]`), BEFORE matching — a worker
+#   separated this period searches this same period, so job loss and the search
+#   response are not staggered across periods. `Matching`: the
+#   unemployed CHOOSE their job-finding probability `p ∈ [0, 1]` directly — the
+#   lottery over "search succeeds" (`[0 1; 0 1]`) and "search fails" (identity); the
+#   employed rows coincide, so the employed choice is degenerate (`p* = 0`, cost 0).
+#   The sugar single-homes the convex UTILS cost `c(p) = κ_s·((1−p)log(1−p) + p)` and
+#   its closed-form argmax `p*(y) = 1 − exp(−y/κ_s)`; the scale `κ_s = χ/(A_match·θ)`
+#   is calibrated so `c′(p) = χ·e(p)` at the effort `e(p) = −log(1−p)/(A·θ)` the
+#   matching technology `p = 1 − exp(−A·e·θ)` requires — higher tightness ⇒ cheaper
+#   search. (Partial equilibrium: `θ` is a fixed scalar passed as `tightness`.)
 #
 # This example PAIRS with `examples/mccall_search`: both use the same gated
 # `ArgmaxStage(:emp)` `-Inf` trick with a spectator axis driving a threshold, in
@@ -39,7 +50,8 @@
 # Pissarides (2000) "Equilibrium Unemployment Theory".
 #
 # Library stages used (NO bespoke household stage): ArgmaxStage, UtilityStage,
-# TimeDiscountingStage, MarkovStage, SearchMatchingStage.
+# TimeDiscountingStage, MarkovStage, SearchMatchingStage (derived sugar =
+# MarkovStage ∘ MixingStage).
 
 using HouseholdStages
 
@@ -59,11 +71,10 @@ using HouseholdStages
     ρ_z   :: Float64 = 0.90        # persistence
     σ_z   :: Float64 = 0.20        # innovation std (logs)
 
-    # Search effort + matching.
-    N_eff   :: Int     = 10
-    eff_max :: Float64 = 3.0
-    χ       :: Float64 = 0.5       # effort-cost scale: cost(e) = 0.5·χ·e²
-    A_match :: Float64 = 0.5       # matching efficiency in p(e,θ) = 1 − exp(−A·e·θ)
+    # Search cost + matching: κ_s = χ/(A_match·θ) scales the probability-space
+    # search cost c(p) = κ_s·((1−p)log(1−p) + p).
+    χ       :: Float64 = 0.5       # search-cost scale (effort disutility 0.5·χ·e²)
+    A_match :: Float64 = 0.5       # matching efficiency in p(e, θ) = 1 − exp(−A·e·θ)
     θ       :: Float64 = 2.5       # FIXED market tightness (partial equilibrium)
 end
 
@@ -122,13 +133,16 @@ end
 
 """
 Build the moment-attached endogenous-separations block
-`QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Matching`, with the employment rate,
-the employed/unconditional `z` mass, and the (employed-origin) `z` mass attached as
-moments. The `:emp` axis is 1 = unemployed, 2 = employed; `w`, `b_u` ride `env`; the
-tightness `θ` and exogenous separation `δ` are fixed params. Five existing library
-stages, no bespoke household stage: the keep/quit choice is a gated `ArgmaxStage`
-whose `-Inf` entry forbids self-promotion, and the `:z` spectator delivers the
-reservation-productivity (quit) cutoff.
+`QuitChoice ∘ FlowUtility ∘ Discount ∘ ZShock ∘ Separation ∘ Matching`, with the
+employment rate, the employed/unconditional `z` mass, and the (employed-origin) `z`
+mass attached as moments. The `:emp` axis is 1 = unemployed, 2 = employed; `w`, `b_u`
+ride `env`; the tightness `θ` and exogenous separation `δ` are fixed params. Six
+existing library leaves, no bespoke household stage: the keep/quit choice is a gated
+`ArgmaxStage` whose `-Inf` entry forbids self-promotion (the `:z` spectator delivers
+the reservation-productivity cutoff), and separation + job search is the
+`SearchMatchingStage` sugar — the separation `MarkovStage` composed with the
+`MixingStage` lottery over the "success"/"fail" `:emp` kernels at convex
+probability-space cost.
 """
 function endogenous_separations_household(p = endogenous_separations_params)
     T_z, z = z_process(p)
@@ -143,22 +157,21 @@ function endogenous_separations_household(p = endogenous_separations_params)
     quit_reward = [0.0   0.0;
                    -Inf  0.0]
 
-    efforts = collect(range(0.0, p.eff_max; length = p.N_eff))
-
-    quit_choice  = ArgmaxStage(layout; axis = :emp, reward = quit_reward, search = :brute)
+    quit_choice  = ArgmaxStage(layout; axis = :emp, reward = quit_reward)
     flow_utility = UtilityStage(layout;
         utility = (; emp, z, env) -> emp == :emp ? u_crra(env.w * z, Val(p.σ)) :
                                                    u_crra(env.b_u, Val(p.σ)))
     discount = TimeDiscountingStage(layout; β = p.β)
     z_shock  = MarkovStage(layout; axis = :z, transition_matrix = T_z)
-    matching = SearchMatchingStage(layout; axis = :emp,
-        efforts     = efforts,
-        cost        = e -> 0.5 * p.χ * e^2,
-        job_finding = (e, θ) -> 1 - exp(-p.A_match * e * θ),
-        separation  = p.δ,
-        tightness   = p.θ)            # fixed scalar tightness (partial equilibrium)
 
-    hh = quit_choice ∘ flow_utility ∘ discount ∘ z_shock ∘ matching
+    search_and_match = SearchMatchingStage(layout;  # Separation ∘ Matching (derived sugar):
+        separation          = p.δ,                  #   the separated search this same period
+        effort_cost_scale   = p.χ,
+        matching_efficiency = p.A_match,
+        tightness           = p.θ,                  # fixed scalar (partial equilibrium)
+    )
+
+    hh = quit_choice ∘ flow_utility ∘ discount ∘ z_shock ∘ search_and_match   # 6 leaves
     return define_moments!(hh;
         employment = at_end(integrand = (; emp) -> emp == :emp ? 1.0 : 0.0, reduce = sum),
         z_emp      = at_end(integrand = (; z, emp) -> emp == :emp ? z : 0.0, reduce = sum),

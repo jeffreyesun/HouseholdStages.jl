@@ -39,8 +39,8 @@ function life_cycle_solve(p = life_cycle_params; verbosity = 1)
     # product (and its per-age components) sits one level down.
     product = hh.buffer.stages[1]
     comp = product.buffer.components            # the N per-age (wealth,income,age=1) chains
-    out_layout = product.buffer.output_layout   # stacked (wealth, income, age=N)
-    nw, nε, N = layout_size(input_layout(comp[1]))[1], length(p.ε_grid), p.N
+    out_layout = end_layout(product)      # stacked (wealth, income, age=N)
+    nw, nε, N = layout_size(start_layout(comp[1]))[1], length(p.ε_grid), p.N
 
     env_age(a) = (; r = p.r, y = age_earnings(a, p))
 

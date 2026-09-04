@@ -31,7 +31,7 @@ function discount_het_steady_state(p = discount_het_params; verbosity = 1)
 
     # Per-β wealth decomposition from the stationary Λ #
     #-------------------------------------------------#
-    out_layout = hh.buffer.output_layout
+    out_layout = end_layout(hh)
     cells = cell_array(out_layout)
     nβ = length(p.β_grid)
 

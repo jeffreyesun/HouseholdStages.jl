@@ -18,15 +18,13 @@ using Printf
 
 """
 The seated keep/quit policy of a solved household: the `(N_z, 2)` array of chosen
-`:emp` indices (1 = unemployed, 2 = employed) per `(z, origin-emp)` cell. The unique
-policy-bearing leaf is the `QuitChoice` `ArgmaxStage` (`SearchMatchingStage` exposes
-no `policy` method), so we pluck it by the `policy` method rather than a positional
-index.
+`:emp` indices (1 = unemployed, 2 = employed) per `(z, origin-emp)` cell. Two chain
+leaves carry a `policy` (the `QuitChoice` `ArgmaxStage` and the `Matching`
+`MixingStage`, whose policy is the job-finding probability), so we pluck the quit
+leaf by TYPE rather than by the `policy` method or a positional index.
 """
 function quit_policy(hh)
-    leaves = filter(s -> !(s isa HouseholdStages.ChainStage) &&
-                         hasmethod(HouseholdStages.policy, Tuple{typeof(s)}),
-                    collect(hh.buffer.stages))
+    leaves = filter(s -> s isa ArgmaxStage, collect(hh.buffer.stages))
     return HouseholdStages.policy(only(leaves))
 end
 

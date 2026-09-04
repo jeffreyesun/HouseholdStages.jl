@@ -5,7 +5,7 @@
 # The "negative" of rational inattention: a household that pays to ADD
 # dispersion to its next-period wealth — a deliberate mean-preserving spread —
 # rather than to sharpen it. This is the θ↑ ("diffuse") reading of
-# `ScaleVarianceStage` flagged in MODEL_CATALOG.md §7 (the one ◐ on the
+# `MeanPreservingSpreadStage` flagged in MODEL_CATALOG.md §7 (the one ◐ on the
 # opposites table). It realizes that sign-flip as a SHIPPED, SOLVED example
 # while staying a pure composition of existing library stages.
 #
@@ -18,14 +18,14 @@
 # cost. Far from the floor V is concave and the household picks θ = 0.
 #
 # Why this is genuinely the dual, not a rebuild of two existing examples:
-#   • `risk_shifting` gambles via `MeanVarianceStage` — a MULTIPLICATIVE risky
-#     SHARE `a'·(R_f + θ·excess)` over the `MeanVarianceKernel`/`PortfolioReturn`
-#     landing. Here the lever is `ScaleVarianceStage` — an ADDITIVE mean-
-#     preserving spread `b' ↦ b' + θ·ξ` over the `MPSKernel`/`AdditiveSpread`
-#     landing. Different stage, different kernel.
+#   • `risk_shifting` gambles via `GaussianLoadingStage` — a MULTIPLICATIVE risky
+#     SHARE, Gaussian rows at mean `a'·(R_f + θμ)` and sd `|a'|·θ·σ` over the
+#     `GaussianLoadingKernel`. Here the lever is `MeanPreservingSpreadStage` — an
+#     ADDITIVE Gaussian mean-preserving spread of `b'` (mean `b'`, sd θ) over
+#     the `MeanPreservingSpreadKernel` row. Same row family, different subspace.
 #   • `rational_inattention` / `mackowiak_wiederholt` use the SAME stage
-#     (`ScaleVarianceStage`) but in the θ↓ "sharpen" reading: the dispersion is
-#     an unwanted byproduct of a noisy signal, θ = 0 is the perfect-attention
+#     (`MeanPreservingSpreadStage`) but in the θ↓ "sharpen" reading: the dispersion
+#     is an unwanted byproduct of a noisy signal, θ = 0 is the perfect-attention
 #     benchmark, and θ* is interior only because of the borrowing constraint.
 #     Here θ↑ is the DELIBERATE choice — the household wants the spread for its
 #     own sake (convex-V option value), the opposite economic direction.
@@ -43,11 +43,12 @@
 #                      diffusion choice is active).
 # `Savings`          — `ConsumptionSavingsStage` picks next-period wealth `b'`;
 #                      `c = x − b'`, CRRA. Grid floor is the borrowing limit.
-# `Diffuse`          — `ScaleVarianceStage` on `:wealth`: the household picks the
-#                      dispersion `θ ∈ dispersions` of a mean-preserving spread
-#                      `b' ↦ b' + θ·ξ` (ξ ∈ {−1,+1} mean-zero) at the dispersion
-#                      cost `c(θ) = λ·θ²`. This is the COSTLY-DIFFUSION cost
-#                      direction: more spread costs more, θ = 0 is free.
+# `Diffuse`          — `MeanPreservingSpreadStage` on `:wealth`: the household
+#                      picks the continuous dispersion `θ ∈ [0, θ_max]` of a
+#                      Gaussian mean-preserving spread of `b'` (sd θ, clamped)
+#                      at the dispersion cost `c(θ) = λ·θ²`. This is the
+#                      COSTLY-DIFFUSION cost direction: more spread costs more,
+#                      θ = 0 is free.
 # `LimitedLiability` — `WealthChangeStage` `b ↦ max(b, a_floor)`: limited
 #                      liability. A bad diffusion draw cannot push wealth below
 #                      `a_floor`. This floor CONVEXIFIES V just above `a_floor`
@@ -78,9 +79,7 @@ using HouseholdStages
     P_y    :: Matrix{Float64} = [0.80 0.20;
                                  0.20 0.80]
     λ :: Float64       = 0.02                       # dispersion-cost scale  c(θ) = λ·θ²
-    dispersions :: Vector{Float64} = collect(0.0:0.25:2.0)   # θ grid (0 = no diffusion)
-    shocks      :: Vector{Float64} = [-1.0, 1.0]             # mean-zero spread support ξ
-    weights     :: Vector{Float64} = [0.5, 0.5]
+    θ_max :: Float64   = 2.0                        # dispersion cap (θ = 0 is no diffusion)
     a_floor :: Float64 = 0.50                       # limited-liability floor (convexifies V)
     N_w   :: Int       = 120
     w_min :: Float64   = 0.0
@@ -101,10 +100,11 @@ const costly_diffusion_params = CostlyDiffusionParams()
 Build the costly-diffusion household block
 `IncomeShock ∘ Receipt ∘ Savings ∘ Diffuse ∘ LimitedLiability`, with
 `mean_wealth = ∫ wealth dΛ` attached. Five existing stages, no bespoke
-household stage: the `Diffuse` leaf is a `ScaleVarianceStage` choosing the
-dispersion θ of a mean-preserving spread on next-period wealth at the cost
-`c(θ) = λ·θ²`, and the `LimitedLiability` floor convexifies the continuation so
-that θ↑ (deliberate diffusion) is optimal near the floor.
+household stage: the `Diffuse` leaf is a `MeanPreservingSpreadStage` choosing
+the continuous dispersion θ ∈ [0, θ_max] of a Gaussian mean-preserving spread on
+next-period wealth at the cost `c(θ) = λ·θ²`, and the `LimitedLiability` floor
+convexifies the continuation so that θ↑ (deliberate diffusion) is optimal near
+the floor.
 """
 function costly_diffusion_household(p = costly_diffusion_params)
     layout = GriddedLayout(
@@ -116,12 +116,12 @@ function costly_diffusion_household(p = costly_diffusion_params)
     receipt = IncomeStage(layout)               # (1+r)·wealth + w·income; r defaults to 0 in env
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))
 
-    # Deliberate diffusion: pick the dispersion θ of a mean-preserving spread
-    # b' ↦ b' + θ·ξ at cost λ·θ². The floor below convexifies V ⇒ θ↑ near it.
-    diffuse = ScaleVarianceStage(layout; axis = :wealth,
-        dispersions = p.dispersions, shocks = p.shocks, weights = p.weights,
+    # Deliberate diffusion: pick the continuous dispersion θ of a Gaussian
+    # mean-preserving spread of b' at cost λ·θ². The floor below convexifies
+    # V ⇒ θ↑ near it.
+    diffuse = MeanPreservingSpreadStage(layout; axis = :wealth, θ_max = p.θ_max,
         cost = (θ; env) -> env.λ * θ^2)
 
     # Limited liability: a bad spread draw cannot push wealth below a_floor.
@@ -134,14 +134,14 @@ function costly_diffusion_household(p = costly_diffusion_params)
 end
 
 """
-The `ScaleVarianceStage` (`Diffuse`) leaf of a built costly-diffusion block —
-its seated `policy` is the chosen dispersion θ*(x). Located by type rather than
-a hard index (the upstream `ConsumptionSavingsStage` expands to
+The `MeanPreservingSpreadStage` (`Diffuse`) leaf of a built costly-diffusion
+block — its seated `policy` is the chosen dispersion θ*(x). Located by type
+rather than a hard index (the upstream `ConsumptionSavingsStage` expands to
 `argmax ∘ TimeDiscounting`, so the position is not fixed).
 """
 function costly_diffusion_diffuse_stage(hh)
     stages = hh.buffer.stages
-    idx = findfirst(s -> s isa StreamingChoiceStage, stages)
+    idx = findfirst(s -> s isa MeanPreservingSpreadStage, stages)
     return stages[idx]
 end
 

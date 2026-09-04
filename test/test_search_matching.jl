@@ -1,175 +1,90 @@
 using Test
 using HouseholdStages
-using HouseholdStages: fix
 
-# SearchMatchingStage (SAM_RI_STAGE_PROPOSAL.md §3, Route B). A dedicated stage:
-# effort is an INTERNAL parameter grid (never a state axis); backward maxes over
-# effort to form the unemployed value and stores the effort policy; forward
-# replays the policy-selected θ-dependent Bernoulli matching row plus the fixed
-# separation row. The labor axis `:emp` has level 1 = unemployed, 2 = employed.
-#
-# Faces tested:
-#   (1) max-collapse correctness — V_unemp matches the closed-form max over effort,
-#       V_emp matches the separation mix; the stored effort policy is the argmax;
-#   (2) p(θ) comparative static — a tighter market (higher θ) raises job-finding,
-#       so the unemployed value rises and forward pushes more mass into employment;
-#   (3) duality on the linear matching/separation operator (the cost flow reward is
-#       additive on the V side, so the clean identity is on the K part — cf. the
-#       MigrationStage duality test);
-#   (4) mass conservation (each labor column is stochastic);
-#   (5) env-dependent matching via FromEnv(:θ) — θ is declared in the env slice and
-#       re-resolved each backward.
+# SearchMatchingStage (derived sugar, re-introduced 2026-07-29): one call returning the
+# separation `MarkovStage ∘` job-search `MixingStage` pair on a 2-level `:emp` axis, with the
+# entropy-family probability cost c(p) = κ·((1−p)log(1−p) + p), κ = χ/(A·θ), and its Fenchel
+# argmax p*(y) = clamp(1 − exp(−y·Aθ/χ), 0, 1) single-homed in the sugar. Checked: leaf-level
+# equivalence with the hand-written pair to 1e-14, policy readback through the chain (interior
+# on unemployed cells, exactly 0.0 on employed), the tightness comparative static via env and
+# via a scalar `tightness`, the closed-form p* against a hand-computed gap y = a − b, forward
+# mass conservation, and the 2-level-axis assert. Wrapped in a module so fixture globals don't leak.
 
-# A two-level labor axis × a wealth axis. θ drives job-finding via the closure.
-function _sam_layout(; n_w = 4)
-    return GriddedLayout(
-        :wealth => GriddedContinuous(collect(range(0.0, 3.0; length = n_w))),
-        :emp => Discrete([:unemp, :emp]),   # level 1 = unemployed, 2 = employed
-    )
+module SearchMatchingSugarTest
+using Test, HouseholdStages
+
+const sm_χ   = 0.5
+const sm_A   = 0.5
+const sm_δ   = 0.1
+const sm_env = (; θ = 1.5)
+const sm_lay = GriddedLayout(:x   => Discrete([0.5, 1.0, 2.0]),          # spectator axis
+                             :emp => Discrete([:unemp, :emp]))           # 1 = unemployed, 2 = employed
+const sm_W   = [1.0 4.0; 0.5 3.0; 2.0 6.0]     # V_end (x, emp): employment worth more everywhere
+const sm_Λ   = [0.10 0.20; 0.15 0.25; 0.05 0.25]
+
+sugar(; kw...) = SearchMatchingStage(sm_lay; separation = sm_δ, effort_cost_scale = sm_χ,
+                                     matching_efficiency = sm_A, kw...)
+
+"The hand-written pair the sugar replaces, at a fixed tightness θ (constant κ_s)."
+function manual_chain(θ)
+    κ_s = sm_χ / (sm_A * θ)
+    matching = MixingStage(sm_lay; axis = :emp,
+        K_A    = [0.0 1.0; 0.0 1.0],                              # search succeeds → employed
+        K_B    = [1.0 0.0; 0.0 1.0],                              # search fails → stay
+        cost   = (p; env) -> p >= 1 ? κ_s : κ_s * ((1 - p) * log1p(-p) + p),
+        policy = (y; env) -> clamp(1 - exp(-y / κ_s), 0.0, 1.0))
+    sep = MarkovStage(sm_lay; axis = :emp, transition_matrix = [1.0 0.0; sm_δ 1.0 - sm_δ])
+    return sep ∘ matching
 end
 
-# Job-finding probability increasing in effort and tightness; bounded in (0,1).
-_p(e, θ) = 1 - exp(-e * θ)
-_cost(e) = 0.5 * e^2
-
-function _sam_stage(layout; efforts = collect(range(0.0, 2.0; length = 6)),
-                    δ = 0.10, tightness = FromEnv(:θ))
-    return SearchMatchingStage(layout; axis = :emp, efforts = efforts,
-                               cost = _cost, job_finding = _p,
-                               separation = δ, tightness = tightness)
+@testset "search-matching sugar ≡ manual MarkovStage ∘ MixingStage (1e-14)" begin
+    chain = sugar()                                # default tightness reads env.θ
+    ref   = manual_chain(sm_env.θ)
+    @test length(chain.buffer.stages) == 2         # flat: the same two leaves as the hand-written pair
+    V, Vr = backward!(chain, sm_W, sm_env), backward!(ref, sm_W, sm_env)
+    @test maximum(abs, V .- Vr) < 1e-14
+    Λ, Λr = forward!(chain, sm_Λ), forward!(ref, sm_Λ)
+    @test maximum(abs, Λ .- Λr) < 1e-14
 end
 
-@testset "SearchMatchingStage — labor axis must be 2 levels" begin
-    bad = GriddedLayout(:wealth => GriddedContinuous([0.0, 1.0]),
-                      :emp => Discrete([:a, :b, :c]))
-    @test_throws AssertionError _sam_stage(bad)
+@testset "policy readback through the chain — interior p* unemployed, exactly 0.0 employed" begin
+    chain = sugar()
+    backward!(chain, sm_W, sm_env)
+    p = policy(chain)                              # reaches the unique policy-bearing (mixing) leaf
+    @test size(p) == (3, 2)
+    @test all(0 .< p[:, 1] .< 1)                   # unemployed: interior search
+    @test all(p[:, 2] .== 0.0)                     # employed rows coincide ⇒ degenerate, exactly 0
 end
 
-@testset "SearchMatchingStage — env slice declares θ (FromEnv)" begin
-    stage = _sam_stage(_sam_layout())
-    @test :θ in effective_env_slice(stage)
+@testset "closed form p* = clamp(1 − exp(−y·Aθ/χ), 0, 1) at hand-computed y = a − b" begin
+    chain = sugar()
+    backward!(chain, sm_W, sm_env)
+    # On the unemployed cells: a = (K_A·W)ᵤ = W[:, emp], b = (K_B·W)ᵤ = W[:, unemp].
+    y = sm_W[:, 2] .- sm_W[:, 1]
+    @test policy(chain)[:, 1] ≈ clamp.(1 .- exp.(-y .* sm_A .* sm_env.θ ./ sm_χ), 0.0, 1.0)
 end
 
-@testset "SearchMatchingStage — max-collapse + separation correctness" begin
-    layout  = _sam_layout()
-    efforts = collect(range(0.0, 2.0; length = 6))
-    δ       = 0.10
-    θ       = 1.0
-    stage   = _sam_stage(layout; efforts = efforts, δ = δ)
-    n_w     = axissize(layout.axes[1])
-
-    # An asymmetric continuation: employment worth more, value rising in wealth.
-    V_out = zeros(n_w, 2)
-    V_out[:, 1] .= 0.1 .* (1:n_w)              # unemployed continuation
-    V_out[:, 2] .= 0.1 .* (1:n_w) .+ 1.0       # employed continuation (better)
-
-    V_start = copy(backward!(stage, V_out, (θ = θ,)))
-
-    Vu = V_out[:, 1]; Ve = V_out[:, 2]
-    # Unemployed value: hard max over effort of −cost(e) + p·Ve + (1−p)·Vu.
-    for w in 1:n_w
-        expected = maximum(-_cost(e) + _p(e, θ) * Ve[w] + (1 - _p(e, θ)) * Vu[w]
-                           for e in efforts)
-        @test V_start[w, 1] ≈ expected atol = 1e-12
-    end
-    # Employed value: separation mix (no choice).
-    for w in 1:n_w
-        @test V_start[w, 2] ≈ (1 - δ) * Ve[w] + δ * Vu[w] atol = 1e-12
-    end
-
-    # The stored effort policy is the argmax effort index per wealth cell.
-    policy = stage.kernel.policy
-    for w in 1:n_w
-        Qs = [-_cost(e) + _p(e, θ) * Ve[w] + (1 - _p(e, θ)) * Vu[w] for e in efforts]
-        @test policy[w] == argmax(Qs)
-    end
+@testset "tightness comparative static — p* rises with env.θ; scalar tightness matches" begin
+    p_loose = (c = sugar(); backward!(c, sm_W, (; θ = 0.5)); copy(policy(c)[:, 1]))
+    p_tight = (c = sugar(); backward!(c, sm_W, (; θ = 2.0)); copy(policy(c)[:, 1]))
+    @test all(p_tight .> p_loose)                  # tighter market ⇒ cheaper search ⇒ more of it
+    scalar = sugar(tightness = 2.0)                # Real tightness: no env read at all
+    backward!(scalar, sm_W, NamedTuple())
+    @test policy(scalar)[:, 1] ≈ p_tight
 end
 
-@testset "SearchMatchingStage — p(θ) comparative static (value + flows)" begin
-    layout = _sam_layout()
-    stage  = _sam_stage(layout)
-    n_w    = axissize(layout.axes[1])
-    V_out  = zeros(n_w, 2); V_out[:, 2] .= 1.0      # employment strictly better
-
-    Vu(θ) = copy(backward!(stage, V_out, (θ = θ,)))[:, 1]
-    # Tighter market ⇒ cheaper to find a job ⇒ unemployed value (weakly) higher.
-    Vu_loose = Vu(0.3)
-    Vu_tight = Vu(3.0)
-    @test all(Vu_tight .>= Vu_loose .- 1e-12)
-    @test any(Vu_tight .> Vu_loose .+ 1e-9)          # strictly higher somewhere
-
-    # Forward: start with all mass unemployed; a tighter market sends more to work.
-    Λ0 = zeros(n_w, 2); Λ0[:, 1] .= 1.0 / n_w
-    emp_mass(θ) = begin
-        backward!(stage, V_out, (θ = θ,))
-        sum(forward!(stage, copy(Λ0))[:, 2])
-    end
-    @test emp_mass(3.0) > emp_mass(0.3)
+@testset "mass conservation through both legs" begin
+    chain = sugar()
+    backward!(chain, sm_W, sm_env)                 # seat the mixing policy first
+    Λ_end = forward!(chain, sm_Λ)
+    @test sum(Λ_end) ≈ sum(sm_Λ) atol = 1e-14
+    @test all(Λ_end .>= 0)
 end
 
-@testset "SearchMatchingStage — mass conservation" begin
-    layout = _sam_layout()
-    stage  = _sam_stage(layout)
-    n_w    = axissize(layout.axes[1])
-    V_out  = randn(n_w, 2)
-    backward!(stage, V_out, (θ = 1.5,))
-
-    Λ_start = abs.(randn(n_w, 2)); Λ_start ./= sum(Λ_start)
-    Λ_end   = copy(forward!(stage, Λ_start))
-    @test sum(Λ_end) ≈ sum(Λ_start) atol = 1e-12
-    @test all(Λ_end .>= -1e-15)                       # a probability distribution
+@testset "2-level axis assert — a 3-level axis throws at construction" begin
+    lay3 = GriddedLayout(:emp => Discrete([:u, :e, :retired]))
+    @test_throws AssertionError SearchMatchingStage(lay3; separation = sm_δ,
+        effort_cost_scale = sm_χ, matching_efficiency = sm_A, tightness = 1.0)
 end
 
-@testset "SearchMatchingStage — duality on the linear matching/separation operator" begin
-    # The unemployed flow reward −cost(e*) is additive on the V side, so the clean
-    # duality identity is on the LINEAR operator K (matching + separation, no cost)
-    # and its transpose (the forward scatter). Build K from the solved policy/p and
-    # the separation rate, and check ⟨K V_out, Λ_in⟩ = ⟨V_out, K Λ_in⟩ where the
-    # second is exactly the stage's forward.
-    layout = _sam_layout()
-    δ      = 0.10
-    θ      = 2.0
-    stage  = _sam_stage(layout; δ = δ)
-    n_w    = axissize(layout.axes[1])
-
-    V_out   = randn(n_w, 2)
-    Λ_start = abs.(randn(n_w, 2)); Λ_start ./= sum(Λ_start)
-    backward!(stage, V_out, (θ = θ,))
-    p = stage.kernel.p                          # p(e*(w), θ), per wealth
-
-    # Linear K applied to V_out (value side), per wealth column:
-    #   (K V)_unemp = (1−p)·Vu + p·Ve         (job-finding lottery at chosen effort)
-    #   (K V)_emp   = δ·Vu + (1−δ)·Ve         (separation)
-    Vu = V_out[:, 1]; Ve = V_out[:, 2]
-    KV = similar(V_out)
-    @. KV[:, 1] = (1 - p) * Vu + p * Ve
-    @. KV[:, 2] = δ * Vu + (1 - δ) * Ve
-
-    Λ_end = copy(forward!(stage, Λ_start))            # = Kᵀ Λ_start (mass pushforward)
-    @test sum(KV .* Λ_start) ≈ sum(V_out .* Λ_end) atol = 1e-12
-end
-
-@testset "SearchMatchingStage — separation can be FromEnv" begin
-    layout = _sam_layout()
-    stage  = SearchMatchingStage(layout; axis = :emp,
-                                 efforts = collect(range(0.0, 2.0; length = 5)),
-                                 cost = _cost, job_finding = _p,
-                                 separation = FromEnv(:δ), tightness = FromEnv(:θ))
-    @test :δ in effective_env_slice(stage)
-    @test :θ in effective_env_slice(stage)
-    n_w   = axissize(layout.axes[1])
-    V_out = randn(n_w, 2)
-
-    # Higher separation ⇒ employed value pulled toward the (lower) unemployed value.
-    Ve_lo = copy(backward!(stage, V_out, (θ = 1.0, δ = 0.05)))[:, 2]
-    Ve_hi = copy(backward!(stage, V_out, (θ = 1.0, δ = 0.40)))[:, 2]
-    Vu = V_out[:, 1]; Ve = V_out[:, 2]
-    for w in 1:n_w
-        @test Ve_lo[w] ≈ 0.95 * Ve[w] + 0.05 * Vu[w] atol = 1e-12
-        @test Ve_hi[w] ≈ 0.60 * Ve[w] + 0.40 * Vu[w] atol = 1e-12
-    end
-
-    # Forward replays the env's δ that backward last saw; mass still conserved.
-    Λ_start = abs.(randn(n_w, 2)); Λ_start ./= sum(Λ_start)
-    @test sum(forward!(stage, copy(Λ_start))) ≈ 1.0 atol = 1e-12
-end
+end # module

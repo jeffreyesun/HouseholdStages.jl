@@ -22,17 +22,24 @@
 # `ConsumptionSavings` — `ConsumptionSavingsStage` picks next financial wealth
 #                        `b'`; CRRA felicity with PER-TYPE curvature `σ_i`
 #                        captured in the utility closure.
-# `Portfolio`          — `MeanVarianceStage` picks the risky share `θ`, next
-#                        wealth `b'·(R_f + θ·(R_k − R_f))`. The FIXED
-#                        PARTICIPATION COST rides its `cost` closure:
+# `Portfolio`          — `GaussianLoadingStage`, here read as the portfolio stage
+#                        (anchor = R_f, increment = the Gaussian excess return):
+#                        picks the CONTINUOUS risky share
+#                        `θ ∈ [0, 1]`, next wealth `b'·(R_f + θ·(μ_x + σ_x·Z))`
+#                        for a truncated-Gaussian excess moment-matched to
+#                        (R_risky, p_risky). The FIXED PARTICIPATION COST rides
+#                        its `cost` closure:
 #                        `cost = (θ; env) -> θ > 0 ? env.F : 0.0` — staying out
 #                        (`θ = 0`) is free, ANY positive share pays `F`. This is
-#                        the extensive margin: the household participates only
-#                        when the value of an optimal positive share clears the
-#                        fixed cost.
+#                        the extensive margin: the continuous solver's scan +
+#                        exact-endpoint logic compares the free `θ = 0` corner
+#                        against the best interior share net of `F`, so
+#                        non-participants sit at EXACTLY `θ* = 0` and
+#                        participants pick the interior (or cap) share — both
+#                        margins from one closure.
 #
-# THE PARTICIPATION COST IS IN VALUE UNITS. `MeanVarianceStage`'s backward sets
-# `V_start(b') = max_θ[ Σ_k w_k·V_end(b'·R_θ,k) − cost(θ) ]`, so `F` is an
+# THE PARTICIPATION COST IS IN VALUE UNITS. `GaussianLoadingStage`'s backward sets
+# `V_start(b') = max_θ[ E_Z V_end(b'·(R_f + θ·(μ_x + σ_x·Z))) − cost(θ) ]`, so `F` is an
 # additive penalty in continuation-value (utils), NOT a wealth/consumption
 # subtraction. The library `cost` closure sees only `(θ; env)` — never the
 # cell's wealth — so a wealth-DENOMINATED fixed cost (the literal G–M monetary
@@ -75,10 +82,10 @@ using HouseholdStages
                                  0.05 0.20 0.75]
     R_f     :: Float64 = 1.02                       # gross risk-free return
     # Risky leg: mean 1.05 (3% premium) with a wide spread, so even risk-tolerant
-    # σ < 1 types pick an interior share rather than cornering.
+    # σ < 1 types pick an interior share rather than cornering. Feeds the
+    # moment-matched Gaussian excess (μ_x = 0.03, σ_x = 0.25) below.
     R_risky :: Vector{Float64} = [0.80, 1.30]
     p_risky :: Vector{Float64} = [0.5, 0.5]
-    shares  :: Vector{Float64} = collect(0.0:0.05:1.0)
     F       :: Float64 = 0.025                       # fixed participation cost (utils, per period)
     N_w   :: Int       = 160
     w_min :: Float64   = 0.0
@@ -96,9 +103,9 @@ const gm_params = GomesMichaelidesParams()
 """
 Build one preference type's Merton block `IncomeShock ∘ Receipt ∘
 ConsumptionSavings(σ) ∘ Portfolio(F)` against the SHARED layout (the `:ptype`
-axis a size-1 singleton, so every block has identical input layout and Spec
-type). The CRRA curvature `σ` is captured in the savings utility closure
-(`σ::Float64` ⇒ identical closure TYPE across types, only the value differs) and
+axis a size-1 singleton that `product` grows to the type count, so every block
+sits between the same two layouts). The CRRA curvature `σ` is captured in the
+savings utility closure (only the value differs across types) and
 the fixed participation cost `F` rides the portfolio `cost` closure
 (`θ > 0 ⇒ F`, `θ = 0` free). Only the captured `σ` differs across calls.
 """
@@ -114,10 +121,13 @@ function gm_block(σ::Float64, p = gm_params)
         wealth_post = (; wealth, income, env) -> wealth + env.w * income)
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(σ)))                        # σ captured: same closure TYPE per type
-    portfolio = MeanVarianceStage(layout;
-        shares = p.shares, risk_free = p.R_f, risky_returns = p.R_risky, probs = p.p_risky,
-        cost   = (θ; env) -> θ > 0 ? env.F : 0.0)                             # fixed participation cost (extensive margin)
+        utility = (cell, c) -> u_crra(c, Val(σ)))                        # σ captured: same closure TYPE per type
+    # Gaussian excess-return moments matched to the two-point lottery's excess returns.
+    μx = sum(p.p_risky .* (p.R_risky .- p.R_f))
+    σx = sqrt(sum(p.p_risky .* (p.R_risky .- p.R_f) .^ 2) - μx^2)
+    portfolio = GaussianLoadingStage(layout;
+        anchor = p.R_f, increment_mean = μx, increment_sd = σx,
+        cost = (θ; env) -> θ > 0 ? env.F : 0.0)                               # fixed participation cost (extensive margin)
 
     return shock ∘ receipt ∘ savings ∘ portfolio
 end

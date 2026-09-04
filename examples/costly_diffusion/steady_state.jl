@@ -6,15 +6,15 @@
 # loop" is a single inner V/Λ fixed-point solve at the given env. (Contrast the
 # Aiyagari/Krusell–Smith examples, which roll a tatonnement on K̄.) The whole
 # point is that the household block is library stages only — the diffusion leaf
-# is a `ScaleVarianceStage` in the θ↑ ("diffuse") reading, no bespoke household
+# is a `MeanPreservingSpreadStage` in the θ↑ ("diffuse") reading, no bespoke household
 # stage. See `model.jl`.
 #
 # The report shows the diffusion comparative static: the seated dispersion
 # policy θ*(x) is HIGH near the limited-liability floor (deliberate diffusion —
 # the convex region) and → 0 for well-capitalized households (concave V). It is
 # the mirror image of `examples/risk_shifting` (θ* DECREASING in net worth), but
-# via an ADDITIVE mean-preserving spread (`ScaleVarianceStage`) rather than a
-# multiplicative risky share (`MeanVarianceStage`).
+# via an ADDITIVE mean-preserving spread (`MeanPreservingSpreadStage`) rather than a
+# multiplicative risky share (`GaussianLoadingStage`).
 
 include("model.jl")
 

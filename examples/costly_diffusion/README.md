@@ -3,7 +3,7 @@
 The **"negative" of rational inattention**: a household that pays to *add*
 dispersion to its next-period wealth — a deliberate mean-preserving spread —
 rather than to sharpen it. This realizes the θ↑ ("diffuse") reading of
-`ScaleVarianceStage` flagged in `MODEL_CATALOG.md` §7 (the one ◐ on the
+`MeanPreservingSpreadStage` flagged in `MODEL_CATALOG.md` §7 (the one ◐ on the
 opposites table) as a **shipped, solved** example, while staying a pure
 composition of existing library stages.
 
@@ -25,7 +25,7 @@ library stages**, in time order, with **no bespoke household stage**.
 | `IncomeShock` | `MarkovStage` (axis `:income`) | Persistent earnings shock — spreads the stationary distribution. |
 | `Receipt` | `IncomeStage` `b ↦ (1+r)b + w·y` | Cash-on-hand each period; impatience keeps wealth bounded, the injection refills it. |
 | `Savings` | `ConsumptionSavingsStage` | Choose next-period wealth `b'`; `c = x − b'`, CRRA. |
-| `Diffuse` | `ScaleVarianceStage` (axis `:wealth`) | Pick the dispersion `θ ∈ dispersions` of a mean-preserving spread `b' ↦ b' + θ·ξ` (ξ ∈ {−1,+1}) at cost `c(θ) = λ·θ²`. **θ = 0 is free; more spread costs more** — the costly-diffusion cost direction. |
+| `Diffuse` | `MeanPreservingSpreadStage` (axis `:wealth`) | Pick the continuous dispersion `θ ∈ [0, θ_max]` of a Gaussian mean-preserving spread of `b'` (sd `θ`, clamped) at cost `c(θ) = λ·θ²`. **θ = 0 is free; more spread costs more** — the costly-diffusion cost direction. |
 | `LimitedLiability` | `WealthChangeStage` `b ↦ max(b, a_floor)` | Limited liability: a bad spread draw cannot push wealth below `a_floor`. This floor **convexifies V** just above `a_floor` — the engine that makes deliberate diffusion (θ↑) pay. |
 
 Composed as `IncomeShock ∘ Receipt ∘ Savings ∘ Diffuse ∘ LimitedLiability`.
@@ -35,19 +35,19 @@ the diffusion stage sees that floored (convex) V and seats θ*(x), savings picks
 
 ## Why this is the dual, not a rebuild of two existing examples
 
-- **`risk_shifting`** gambles via `MeanVarianceStage` — a *multiplicative*
-  risky **share** `a'·(R_f + θ·excess)` over the `MeanVarianceKernel` /
-  `PortfolioReturn` landing. Here the lever is `ScaleVarianceStage` — an
-  *additive* mean-preserving spread `b' ↦ b' + θ·ξ` over the `MPSKernel` /
-  `AdditiveSpread` landing. **Different stage, different kernel.**
+- **`risk_shifting`** gambles via `GaussianLoadingStage` — a *multiplicative*
+  risky **share**: Gaussian rows at mean `a'·(R_f + θμ)`, sd `|a'|·θ·σ`, over the
+  `GaussianLoadingKernel`. Here the lever is `MeanPreservingSpreadStage` — an
+  *additive* Gaussian mean-preserving spread of `b'` (mean `b'`, sd `θ`) over the
+  `MeanPreservingSpreadKernel` row. **Same row family, different subspace.**
 - **`rational_inattention` / `mackowiak_wiederholt`** use the *same* stage
-  (`ScaleVarianceStage`) but in the θ↓ **"sharpen"** reading: the dispersion is
+  (`MeanPreservingSpreadStage`) but in the θ↓ **"sharpen"** reading: the dispersion is
   an unwanted byproduct of a noisy signal, θ = 0 is the perfect-attention
   benchmark, and θ* is interior only because of the borrowing constraint. Here
   θ↑ is the **deliberate** choice — the household wants the spread for its own
   sake (convex-V option value), the opposite economic direction.
 
-So this is `ScaleVarianceStage` exercised on the **opposite side** of the
+So this is `MeanPreservingSpreadStage` exercised on the **opposite side** of the
 continuation's curvature from the RI examples — the §7 sign-flip made concrete.
 
 ## Equilibrium
@@ -60,8 +60,8 @@ distribution with mass churning near the floor (where diffusion is active).
 ## Parameters (defaults)
 
 `β = 0.94`, `σ = 3` (CRRA), `w = 0.50` income scale; 2-state income
-`y ∈ {0.7, 1.3}`; dispersion grid `θ ∈ {0, 0.25, …, 2.0}` with mean-zero spread
-support `ξ ∈ {−1, +1}`; dispersion cost `c(θ) = λ·θ²`, `λ = 0.02`; floor
+`y ∈ {0.7, 1.3}`; continuous dispersion `θ ∈ [0, 2.0]` (Gaussian spread, sd `θ`);
+dispersion cost `c(θ) = λ·θ²`, `λ = 0.02`; floor
 `a_floor = 0.50`; wealth grid `N_w = 120`, log-spaced on `[0, 12]`.
 
 ## Expected output
@@ -69,17 +69,17 @@ support `ξ ∈ {−1, +1}`; dispersion cost `c(θ) = λ·θ²`, `λ = 0.02`; fl
 ```
 Costly-diffusion steady state (σ = 3.0, a_floor = 0.50, λ = 0.0200)
   mass(Λ)              = 1.000000
-  mean wealth          = 1.0000
-  dispersion θ*: poor  = 1.775  (near floor a≈0.50, convex V)
-  dispersion θ*: rich  = 0.000  (top decile a≈12.0, concave V)
-  mean θ*              = 0.475,  frac(θ*>0) = 0.362
-  ⇒ deliberate diffusion: poor spread 1775.0× more than rich
+  mean wealth          = 1.1754
+  dispersion θ*: poor  = 1.494  (near floor a≈0.50, convex V)
+  dispersion θ*: rich  = 0.004  (top decile a≈12.0, concave V)
+  mean θ*              = 0.477,  frac(θ*>0) = 0.458
+  ⇒ deliberate diffusion: poor spread 366.0× more than rich
 
 Comparative static — mean chosen dispersion vs. dispersion cost λ:
-  λ = 0.0000  →  mean θ* = 0.6740,  θ*(poor) = 2.000,  frac(θ*>0) = 0.537
-  λ = 0.0050  →  mean θ* = 0.5969,  θ*(poor) = 2.000,  frac(θ*>0) = 0.433
-  λ = 0.0200  →  mean θ* = 0.4750,  θ*(poor) = 1.775,  frac(θ*>0) = 0.362
-  λ = 0.0800  →  mean θ* = 0.1865,  θ*(poor) = 0.362,  frac(θ*>0) = 0.275
+  λ = 0.0000  →  mean θ* = 0.6506,  θ*(poor) = 2.000,  frac(θ*>0) = 0.554
+  λ = 0.0050  →  mean θ* = 0.5787,  θ*(poor) = 2.000,  frac(θ*>0) = 0.508
+  λ = 0.0200  →  mean θ* = 0.4774,  θ*(poor) = 1.494,  frac(θ*>0) = 0.458
+  λ = 0.0800  →  mean θ* = 0.1777,  θ*(poor) = 0.347,  frac(θ*>0) = 0.396
 ```
 
 The seated policy `θ*(x)` is high near the floor (deliberate diffusion in the

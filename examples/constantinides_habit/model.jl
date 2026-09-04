@@ -29,13 +29,13 @@
 # income-fluctuations consumption-savings problem.
 #
 # A FEASIBILITY NOTE (the one departure from a strict `−∞` subsistence). The
-# auxiliary-choice-axis pattern grows the savings axis through a `:brute`
-# `ArgmaxStage` (`Choose`), the only search that supports the rectangular
-# `1 → N_w` grow — and `:brute` ASSERTS that every origin cell has at least one
-# finite-reward action. The minimum-wealth cell structurally has `c = 0` (the
+# auxiliary-choice-axis pattern grows the savings axis through a (brute)
+# `ArgmaxStage` (`Choose`) — an origin cell with NO finite-reward action carries
+# value `−∞`. The minimum-wealth cell structurally has `c = 0` (the
 # cash floor and the savings floor are the same grid point), so a strict
-# `surplus > 0 ? u : −∞` felicity makes that whole column `−∞` and trips the
-# assertion. (`examples/habit` is immune only because Becker–Murphy `√c + αcS`
+# `surplus > 0 ? u : −∞` felicity makes that whole column `−∞`, and the `−∞`
+# poisons the value function at the grid bottom. (`examples/habit` is immune
+# only because Becker–Murphy `√c + αcS`
 # is FINITE at `c = 0`.) The standard subsistence treatment resolves it: floor
 # the surplus at a small `ε > 0` (`c_floor`), so felicity stays finite and the
 # `−∞` region becomes a steep-but-finite penalty the agent avoids in
@@ -108,7 +108,7 @@ function constantinides_habit_household(p = ConstantinidesHabitParams())
     shock   = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(block;                                    # cash-on-hand x = (1+r)a + w·y
         wealth_post = (; wealth, income) -> (1 + p.r) * wealth + p.w * income)   # defaults: (; axis = :wealth)
-    choose  = ArgmaxStage(full; axis = :savings_choice, reward = zeros(p.N_w, 1))
+    choose  = ArgmaxStage(block, full; axis = :savings_choice, reward = zeros(p.N_w, 1))
     felicity = UtilityStage(full; utility = (; wealth, savings_choice, habit) ->     # u(c − γS), c = x − b'
         u_constantinides(wealth - wgrid[Int(savings_choice)], habit, p))
     discount = TimeDiscountingStage(full; β = p.β)

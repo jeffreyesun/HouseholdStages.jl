@@ -65,7 +65,7 @@ function castaneda_steady_state(p = castaneda_params;
         end
         @views beq .+= vec(sum(Λ[:, :, na]; dims = 2))   # oldest cohort: certain death
 
-        Λ_new = forward!(hh.buffer, hh.spec, Λ)          # block forward: age, kill, earn, save
+        Λ_new = forward!(hh, Λ)          # block forward: age, kill, earn, save
         @views Λ_new[:, :, 1] .+= beq * π0'              # re-inject newborns with bequests
 
         diff = maximum(abs, Λ_new .- Λ)
@@ -78,7 +78,7 @@ function castaneda_steady_state(p = castaneda_params;
 
     # Diagnostics: population age distribution and mean wealth by age.
     age_mass  = [sum(@view Λ[:, :, a]) for a in 1:na]
-    w_grid    = axis_grid(hh.buffer.input_layout, :wealth)
+    w_grid    = axis_grid(start_layout(hh), :wealth)
     age_wealth = [age_mass[a] > 0 ? sum(w_grid .* vec(sum(@view Λ[:, :, a]; dims = 2))) / age_mass[a] : 0.0
                   for a in 1:na]
 

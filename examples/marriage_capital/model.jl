@@ -32,7 +32,7 @@
 #       probability — the per-period separation hazard `1 − stay(m)` FALLS with match
 #       capital. The separated state is ABSORBING (no remarriage modelled here). On
 #       the married sub-mass the rows sum to `stay(m) < 1` — the sub-stochastic
-#       survival the spec calls for — while total mass on the full
+#       survival the model calls for — while total mass on the full
 #       `(match_capital, married)` grid is conserved (it accumulates in the
 #       absorbing separated state). The retention probability `stay(m)` is a plain
 #       economic primitive (a logistic in match capital) assembled into a matrix and
@@ -59,7 +59,7 @@
 # `Q = a·i^γ`-style, so to deliver gross investment `i` at investment efficiency `a`
 # costs `effort_cost(i; env) = env.R · (i / env.a)^{1/γ}` (convex for `γ ∈ (0,1)`,
 # exponent `1/γ > 1`). The reward `production(m) − effort_cost(m' − (1−δ)m)` is then
-# supermodular in `(m', m)`, so `CapitalInvestmentStage`'s `:divide_conquer` monotone solve
+# supermodular in `(m', m)`, so `CapitalInvestmentStage`'s divide-and-conquer monotone solve
 # is valid. Higher efficiency `a` lowers the cost — the engine of capital build-up.
 
 using HouseholdStages
@@ -134,7 +134,6 @@ function marriage_household(p = marriage_params)
         depreciation    = p.δ,
         production      = (m; env) -> env.R * m,
         effort_cost     = (i; env) -> i <= 0 ? 0.0 : env.R * (i / env.a)^(1 / p.γ))
-        # defaults: (; monotone_search = :divide_conquer, assume_monotone = false)
 
     # Match-capital-dependent retention as a 2×2 ROW-stochastic matrix per match
     # value; separated is absorbing. `(; match_capital)` receives the :match_capital

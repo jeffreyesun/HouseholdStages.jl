@@ -41,8 +41,9 @@ optimum, `V` unbounded). Depreciation `δ` makes holding capital costly every pe
 payoff is eventually decreasing in `k` and the optimum is finite. `CapitalInvestmentStage`
 carries `δ` in its gross-investment definition `i = k' − (1−δ)k`;
 `DurableAdjustmentStage` (cost on the net change `k'−k`) does not — hence the choice
-here. The convex reward `−φ·(k'−(1−δ)k)²` is supermodular in `(k', k)`, so
-`CapitalInvestmentStage`'s `:divide_conquer` monotone solve is valid.
+here. The convex reward `−φ·(k'−(1−δ)k)²` is supermodular in `(k', k)`, so the
+optimal policy is monotone — though the stage does not lean on that, solving by
+brute per-column max.
 
 ## Driver (example-side, allowed)
 

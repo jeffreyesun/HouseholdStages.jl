@@ -25,7 +25,7 @@ replicate_age(
 | `IncomeShock` | `MarkovStage(:income)` | **env-dependent** transition `T(env.z)`: wider innovation std in recessions |
 | `Receipt` | `WealthChangeStage` | cash-on-hand `x = b + y(age)·ε` |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | picks invested wealth `b'` |
-| `Portfolio` | `MeanVarianceStage` | picks risky share `θ`; next wealth `b'·(R_f + θ·(R_k − R_f))` |
+| `Portfolio` | `GaussianLoadingStage` (portfolio reading: anchor = `R_f`, increment = excess return) | picks the continuous risky share `θ ∈ [0, 1]`; next wealth `b'·(R_f + θ·(μ_x + σ_x·Z))`, the Gaussian excess moment-matched to the equity calibration |
 
 **No bespoke stage.** This is the CGM chain with the `countercyclical_risk`
 env-closure (a Tauchen fill whose conditional variance rises in recessions, at
@@ -44,21 +44,21 @@ solve is one backward sweep plus one forward cohort simulation.)
 
 ```
                        boom     recession    Δ
-mean wealth (x-sec)   1.687      1.933     +14.6%
-θ* (mid-career peak)  ~0.99      ~0.95
-Δθ (max, ages 14-18)             ≈ −0.06
+mean wealth (x-sec)   1.645      1.897     +15.3%
+θ* (mid-career)       ~0.94      ~0.88
+Δθ (max, ages 15-18)             ≈ −0.07
 ```
 
-- **More precautionary self-insurance in recession.** Mean wealth is 14.6%
+- **More precautionary self-insurance in recession.** Mean wealth is 15.3%
   higher in the recession solve, and recession financial wealth exceeds boom
   wealth at every age — the wider income innovations strengthen the
   precautionary motive.
-- **Lower risky share in recession** (Δθ < 0 at every age). Countercyclical
-  income risk makes human wealth riskier and lifts financial wealth, both
-  pushing the financial equity share down. The gap is largest in mid-career
-  (ages 14-18, Δθ ≈ −0.05 to −0.06), exactly where workers carry the most
-  cyclical human-capital risk; the cash-constrained young are pinned at the
-  equity cap in both states.
+- **Lower risky share in recession** (Δθ < 0 at every interior age; the
+  cash-constrained young are pinned at the equity cap in both states).
+  Countercyclical income risk makes human wealth riskier and lifts financial
+  wealth, both pushing the financial equity share down. The gap is largest in
+  mid-career (ages 14-18, Δθ ≈ −0.05 to −0.07), exactly where workers carry
+  the most cyclical human-capital risk.
 - Both profiles inherit the CGM age-decline of the share toward the Merton
   interior (≈ 0.28).
 
@@ -66,15 +66,14 @@ That the same household object delivers two materially different θ*(age)
 profiles and wealth levels demonstrates the env-closure genuinely re-seats the
 income transition when `env.z` changes.
 
-## Note on scope
+## Cost
 
-The prompt offered a stationary-infinite-horizon fallback if the full
-life-cycle + countercyclical solve proved too heavy. It did not: a life-cycle
-solve is a single backward+forward sweep (no fixed point), so two solves run in
-well under a minute. The full life-cycle version is implemented here.
+A life-cycle solve is a single backward+forward sweep with no fixed point, so
+the two aggregate states together run in well under a minute — cheap enough
+that the full life-cycle version needs no stationary approximation.
 
 The newborn financial endowment (`w0_init`, see the CGM README) is carried over
-for the same reason — the package's `MeanVarianceStage` allocates over financial
+for the same reason — the package's `GaussianLoadingStage` allocates over financial
 wealth, so a zero-wealth newborn de-risks rather than holding the human-wealth-
 tilted full-equity share.
 

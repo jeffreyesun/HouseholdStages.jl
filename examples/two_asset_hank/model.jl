@@ -5,9 +5,10 @@
 # A household with a LIQUID asset b (return r_b, freely adjusted) and an ILLIQUID asset a (return
 # r_a > r_b, COSTLY to adjust). Each period it picks the illiquid target a' (paying a convex deposit
 # cost on the net flow d = a' − (1+r_a)a, which is debited from liquid) and then consumes/saves
-# liquid. The illiquid choice must set TWO axes at once — illiquid AND (via the deposit) liquid —
-# the same coupling that halted naive attempts. It IS expressible from existing stages via the
-# **auxiliary-choice-axis pattern** (see examples/habit and PART3_LITERATURE_MODELS.md).
+# liquid. The illiquid choice therefore sets TWO axes at once — illiquid AND (via the deposit)
+# liquid — which existing stages express through the **auxiliary-choice-axis pattern**: route the
+# choice onto its own axis, act on both wealth axes downstream, then sum it away (see
+# `examples/habit` for the other user of the pattern).
 #
 # Household block (time order), existing stages only, NO bespoke stage:
 #
@@ -52,8 +53,8 @@ Base.Broadcast.broadcastable(p::TwoAssetParams) = Ref(p)
 #--------------------------#
 
 """
-Build the two-asset HANK block via the auxiliary-choice-axis pattern (existing stages only, no bespoke
-stage). `mean_liquid`, `mean_illiquid` attached as moments.
+Build the two-asset HANK block via the auxiliary-choice-axis pattern, with `mean_liquid` and
+`mean_illiquid` attached as moments.
 """
 function two_asset_household(p = TwoAssetParams())
     bgrid = collect(range(0.0, p.b_max; length = p.N_b))
@@ -69,7 +70,7 @@ function two_asset_household(p = TwoAssetParams())
     shock   = MarkovStage(block; axis = :income, transition_matrix = p.P_y)
     receipt = WealthChangeStage(block; axis = :liquid,                           # liquid cash = (1+r_b)b + w·y
         wealth_post = (; liquid, income) -> (1 + p.r_b) * liquid + p.w * income)
-    choose  = ArgmaxStage(full; axis = :illiquid_choice, reward = zeros(p.N_a, 1))
+    choose  = ArgmaxStage(block, full; axis = :illiquid_choice, reward = zeros(p.N_a, 1))
     debit   = WealthChangeStage(full; axis = :liquid,                            # b ↦ max(b − d − κd², ε)
         wealth_post = (; illiquid_choice, illiquid, liquid) -> (d = deposit(illiquid_choice, illiquid);
                                       max(liquid - d - p.κ * d^2, p.ε)))
@@ -77,7 +78,7 @@ function two_asset_household(p = TwoAssetParams())
         wealth_post = (; illiquid_choice) -> agrid[Int(illiquid_choice)])
     forget  = ForgetfulSumStage(full; axis = :illiquid_choice)
     savings = ConsumptionSavingsStage(block; β = p.β, axis = :liquid,            # consume from post-deposit liquid
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)))   # defaults: (; monotone_search = :divide_conquer, assume_monotone = false, utility_axes = nothing)
+        utility = (cell, c) -> u_crra(c, Val(p.σ)))   # defaults: (; skip_monotonicity_check = false, utility_axes = nothing)
 
     hh = shock ∘ receipt ∘ choose ∘ debit ∘ credit ∘ forget ∘ savings
     return define_moments!(hh;

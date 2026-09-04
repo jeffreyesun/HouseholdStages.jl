@@ -23,8 +23,8 @@ value (a compact `(n_income, n_income, n_regime)` field); each regime cell
 picks its own income fiber at apply time. The closure receives the regime
 **grid value** (not an index), so it dispatches on `regime == REGIME_BOOM`.
 
-This is the spec's "if the dep-varying transition can't be made to work,
-report what failed" case — **it works**, with no new machinery.
+The whole regime-dependence therefore costs **no new machinery**: one existing
+`MarkovStage`, one closure, one extra axis.
 
 ## Run
 

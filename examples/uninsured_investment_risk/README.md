@@ -21,12 +21,14 @@ IncomeShock ∘ Receipt ∘ ConsumptionSavings ∘ Investment
 | `IncomeShock` | `MarkovStage` | labor income on `:income` |
 | `Receipt` | `WealthChangeStage` | `a ↦ a + w·y` (cash-on-hand) |
 | `ConsumptionSavings` | `ConsumptionSavingsStage` | pick saved wealth `b'`, `c = x − b'`, CRRA |
-| `Investment` | `MeanVarianceStage` | pick share `θ` of `b'` in **risky own capital**; next wealth `b'·(R_f + θ·(R_k − R_f))` |
+| `Investment` | `GaussianLoadingStage` (the portfolio stage read as a capital-exposure choice: anchor = `R_f`, increment = the capital excess return) | pick the continuous share `θ ∈ [0, 1]` of `b'` in **risky own capital**; next wealth `b'·(R_f + θ·(μ_x + σ_x·Z))` |
 
-The "risky asset" is the agent's **own capital** with an undiversifiable idiosyncratic return `R_k`
-(a mean-`μ_k`, half-spread-`Δ` two-point draw); the rest of saved wealth earns the safe store `R_f`.
+The "risky asset" is the agent's **own capital** with an undiversifiable idiosyncratic return — a
+truncated-Gaussian excess with moments `(μ_x, σ_x)` matched in `model.jl` to the calibration's
+mean-`μ_k`, half-spread-`Δ` two-point draw (`μ_x = μ_k − R_f`, `σ_x = Δ` at `p_up = ½`); the rest of
+saved wealth earns the safe store `R_f`.
 Raising θ raises both the mean and variance of next wealth, and a CRRA agent trades them off —
-exactly `MeanVarianceStage`'s mean–variance choice, now read as a capital-exposure choice. The
+exactly `GaussianLoadingStage`'s mean–variance choice, now read as a capital-exposure choice. The
 variance is genuinely idiosyncratic (each agent draws their own `R_k`), so the per-cell return
 distribution is the right primitive — no aggregate risk, no diversification.
 
@@ -48,10 +50,10 @@ the default calibration (`σ = 3`, `μ_k = 1.08`, `R_f = 1.02`, 6% premium):
 
 | `Δ` (variance ↑) | risky share θ* (grid) | mean risky capital | mean wealth |
 |---|---|---|---|
-| 0.005 (≈ riskless) | 0.98 | 60.5 | 69.4 |
-| 0.20 | 0.92 | 18.2 | 40.9 |
-| 0.40 | 0.51 | 3.1 | 8.0 |
+| 0.005 (≈ riskless) | 0.98 | 66.5 | 68.5 |
+| 0.20 | 0.90 | 18.1 | 30.3 |
+| 0.40 | 0.49 | 2.6 | 6.3 |
 
 As undiversifiable variance rises, the risky-capital share and the aggregate risky capital both
-fall (mean risky capital drops ~95% end to end) — the precautionary wedge. The mean return is held
+fall (mean risky capital drops ~96% end to end) — the precautionary wedge. The mean return is held
 fixed throughout, so the decline is driven purely by the *variance* the agent cannot insure.

@@ -1,13 +1,17 @@
-# GPU kernel verification for the two stages with hand-written CUDA kernels:
-# ConsumptionSavingsStage and WealthChangeStage (HouseholdStagesCUDAExt).
+# GPU kernel verification for the stages with hand-written CUDA kernels in
+# HouseholdStagesCUDAExt: ConsumptionSavings/ContinuousArgmax (the off-grid savings
+# choice — the shared divide-and-conquer walk + parabolic vertex on the device-resident reward
+# face, the same inner source as the CPU column loop), WealthChange, the discrete
+# brute argmax (buy/sell-home), DiscreteMove, the choice-collapse forwards,
+# ⊕ products, Mixing/Retention (a closed-form blend of dense applies + broadcasts, so no bespoke
+# ext code), and the two continuous-θ Gaussian siblings, MeanPreservingSpread and
+# GaussianLoading (on-device scan+Newton + Gaussian-row verbs).
 #
 # For each case we build a CPU stage, run backward!/forward! to get a Float64
-# reference, move the stage to the GPU via the production `to_device`, re-run on
-# CuArrays, and assert a tight match (~1e-10). We cover:
-#   * WealthChange with the wealth axis leading and non-leading;
-#   * ConsumptionSavings with n_w-1 a power of two (exercises the iterative
-#     reference k1_argmax kernel) and not (exercises the sequential fallback),
-#     and with the wealth axis non-leading.
+# reference, relocate the stage to the GPU with `to_device(stage, CuArray)`, re-run on
+# CuArrays, and assert a tight match (bit-identical where the arithmetic order is
+# shared; explicit, justified tolerances where device FMA contraction can drift a
+# few ulp). Each stage family covers its operative axis leading and non-leading.
 
 using HouseholdStages
 using CUDA
@@ -19,10 +23,12 @@ const HS = HouseholdStages
 
 CUDA.allowscalar(false)
 
-# Float64-preserving device mover (CUDA.cu would degrade to Float32).
+include("../device_walk.jl")
+
+# Device inputs (`V_end` / `Λ_start`) for the comparisons below.
 to_dev(x::AbstractArray) = CuArray(collect(x))
 to_dev(x)               = x
-gpu_stage(stage::AbstractStage) = to_device(stage, to_dev)
+gpu_stage(stage::AbstractStage) = to_device(stage, CuArray)
 
 # Tight match that lets matching ±Inf entries (borrowing-constraint cells) pass.
 function match_tight(a, b; atol = 1e-10, rtol = 1e-9)
@@ -84,8 +90,8 @@ function build_wc_nonleading()
     (stage, V_end, Λ, (r = 0.04,))
 end
 
-# ConsumptionSavings with n_w-1 NOT a power of two (sequential fallback kernel).
-function build_cs_seq(n_w = 16)
+# ConsumptionSavings at n_w = 16 — the continuous-argmax device kernel at a small grid size.
+function build_cs_n16(n_w = 16)
     layout = GriddedLayout(
         :wealth => GriddedContinuous(
             [exp(t) - 1.0 for t in range(0.0, log(21.0); length = n_w)]),
@@ -98,9 +104,8 @@ function build_cs_seq(n_w = 16)
     (stage, V_end, Λ, NamedTuple())
 end
 
-# ConsumptionSavings with n_w-1 a power of two (iterative reference kernel).
-function build_cs_pow2(n_w = 17)
-    @assert ispow2(n_w - 1)
+# ConsumptionSavings at n_w = 17 — the same device kernel at a second grid size.
+function build_cs_n17(n_w = 17)
     layout = GriddedLayout(
         :wealth => GriddedContinuous(
             [exp(t) - 1.0 for t in range(0.0, log(21.0); length = n_w)]),
@@ -115,7 +120,6 @@ end
 
 # ConsumptionSavings, wealth axis NOT leading.
 function build_cs_nonleading(n_w = 17)
-    @assert ispow2(n_w - 1)
     layout = GriddedLayout(
         :income => Discrete([0.6, 1.0, 1.4]),
         :wealth => GriddedContinuous(
@@ -128,15 +132,15 @@ function build_cs_nonleading(n_w = 17)
     (stage, V_end, Λ, NamedTuple())
 end
 
-# --- :brute argmax builders (buy/sell-home) -------------------------------
+# --- brute argmax builders (buy/sell-home) -------------------------------
 # The discrete `(max, +)` argmax over an UNORDERED axis (housing). These exercise the
-# GPU `:brute` kernel in the ext (the only JMP-fresh backward gap on device). Each uses a
+# GPU brute kernel in the ext (the only JMP-fresh backward gap on device). Each uses a
 # TIE-HEAVY integer-valued V_end (exact ties across the housing axis) so the first-index
 # tie-break is stressed: the policy index must match CPU bit-identically, not just the value.
 
 # Housing axis at the front (WD == 1) vs non-leading (WD == 3, pre > 1 — the real JMP layout
-# where housing sits behind wealth × income). `_to_front`/`_from_front!` are exercised by the
-# non-leading case; the leading case takes the no-permute branch.
+# where housing sits behind wealth × income). The non-leading case is the one whose fibers are
+# strided in memory; the leading case has them contiguous.
 function _house_layout(hpos::Int)
     h = Discrete([0.0, 1.0, 2.0, 3.0])
     w = GriddedContinuous(collect(range(0.0, 4.0; length = 6)))
@@ -169,14 +173,32 @@ function build_sellhome(; hpos::Int)
     (stage, V_end, Λ, nothing)
 end
 
+# A DEP-CARRYING brute reward: the reward table varies along :z, so the walk reads a different
+# (after, before) face per stratum. The device path reaches it through the generic stratified seam —
+# the reward field rides in as a payload and `_slice` projects it onto its dep axes — so value and
+# policy must match the CPU bit-for-bit, exactly as the dep-free cases do.
+function build_buyhome_dep()
+    h = Discrete([0.0, 1.0, 2.0, 3.0])
+    w = GriddedContinuous(collect(range(0.0, 4.0; length = 6)))
+    z = Discrete([0.5, 1.5, 2.5])
+    layout = GriddedLayout(:wealth => w, :h => h, :z => z)
+    base   = [b - a >= 0 ? 0.5 * log1p(b - a) : -Inf for a in 1:4, b in 1:4]
+    stage  = ArgmaxStage(layout; reward = (; z) -> base .+ 0.1z, axis = :h)
+    Random.seed!(20260731)
+    V_end = float.(rand(0:2, axissize.(layout.axes)...))
+    Λ = rand(axissize.(layout.axes)...); Λ ./= sum(Λ)
+    (stage, V_end, Λ, nothing)
+end
+
 const BRUTE_CASES = [
     ("BuyHome  (housing leading)",     () -> build_buyhome(hpos = 1)),
     ("BuyHome  (housing non-leading)", () -> build_buyhome(hpos = 3)),
     ("SellHome (housing leading)",     () -> build_sellhome(hpos = 1)),
     ("SellHome (housing non-leading)", () -> build_sellhome(hpos = 3)),
+    ("BuyHome  (dep-carrying reward)",  build_buyhome_dep),
 ]
 
-# Run one :brute stage CPU vs GPU. Returns (vΔ exact, policy-mismatch count, fw_ok, fw_Δ).
+# Run one brute stage CPU vs GPU. Returns (vΔ exact, policy-mismatch count, fw_ok, fw_Δ).
 # Value AND policy must be bit-identical (exact); the forward scatter uses the tight match
 # (float += collision order differs between the CPU loop and the per-column GPU kernel).
 function brute_cpu_gpu_compare(stage, V_end, Λ_start, env)
@@ -196,11 +218,11 @@ function brute_cpu_gpu_compare(stage, V_end, Λ_start, env)
 end
 
 # --- choice-collapse forward builders (grown scatter axis) ----------------
-# The forward scatter axis GROWS from source to destination: these stages collapse a
-# size-1 choice axis whose ArgmaxStage forward grew it (source 1 → destination 2). They
-# exercise the `_cs_forward_scatter!` path where `size(Λ_start, WD) ≠ size(Λ_end, WD)`
-# (the bug the ext fix targets). Source has one row per column ⇒ each destination cell is
-# written once, so the forward is bit-identical to the CPU scatter (no collision order).
+# The forward scatter axis GROWS from source to destination: the stage collapses a
+# size-1 choice axis whose ArgmaxStage forward grew it (source 1 → destination 2). It
+# exercises the `NearestScatterOp` grown-axis path where `size(Λ_start, WD) ≠ size(Λ_end, WD)`.
+# Source has one row per column ⇒ each destination cell is written once, so the forward is
+# bit-identical to the CPU scatter (no collision order).
 
 # EndogenousExit: collapse on :exiting (the survivor/exit choice).
 function build_exit_collapse()
@@ -211,43 +233,15 @@ function build_exit_collapse()
     (stage, V_end, Λ, NamedTuple())
 end
 
-# KernelChoiceStage: collapse on :θ (the kernel-family choice).
-function build_kernelchoice_collapse()
-    xs = [1.0, 2.0, 3.0]
-    K  = [[0.8 0.2 0.0; 0.1 0.8 0.1; 0.0 0.2 0.8],
-          [0.5 0.5 0.0; 0.3 0.4 0.3; 0.0 0.5 0.5]]
-    c  = [0.0, 0.3]
-    block = GriddedLayout(:x => Discrete(xs), :θ => Discrete([1]))
-    stage = KernelChoiceStage(block; choice_axis = :θ, x_axis = :x, kernels = K, cost = c)
-    W = reshape([4.0, 1.0, 2.0], 3, 1)
-    Λ = reshape([0.2, 0.5, 0.3], 3, 1)
-    (stage, W, Λ, NamedTuple())
-end
-
-# PortfolioStage: collapse on :share (sugar over KernelChoice).
-function build_portfolio_collapse()
-    xs = [1.0, 2.0, 3.0]
-    K  = [[0.8 0.2 0.0; 0.1 0.8 0.1; 0.0 0.2 0.8],
-          [0.5 0.5 0.0; 0.3 0.4 0.3; 0.0 0.5 0.5]]
-    c  = [0.0, 0.3]
-    pblock = GriddedLayout(:wealth => Discrete(xs), :share => Discrete([1]))
-    stage  = PortfolioStage(pblock; kernels = K, cost = c)
-    W = reshape([4.0, 1.0, 2.0], 3, 1)
-    Λ = reshape([0.2, 0.5, 0.3], 3, 1)
-    (stage, W, Λ, NamedTuple())
-end
-
 const COLLAPSE_CASES = [
-    ("EndogenousExit",    build_exit_collapse),
-    ("KernelChoiceStage", build_kernelchoice_collapse),
-    ("PortfolioStage",    build_portfolio_collapse),
+    ("EndogenousExit", build_exit_collapse),
 ]
 
 # --- ProductStage (⊕ direct sum) builders ---------------------------------
-# The `⊕` lift `to_device(::ProductStage, …)` recurses over each bundled factor and moves the
-# product's OWN fused V/Λ tensors — the only combinator buffer that owns arrays (a ChainStage owns
-# none). These exercise that recursion with GPU-able factors: MarkovStage factors (the modern dense
-# path) and ConsumptionSavings factors (each a ChainStage → the hand-written CS CUDA kernels). Kept
+# Relocating a `ProductStage` recurses over each bundled factor and carries the product's OWN fused
+# V/Λ tensors across — the only combinator buffer that owns arrays (a ChainStage owns
+# none). These exercise that recursion with GPU-able factors: MarkovStage factors (the dense
+# path) and ConsumptionSavings factors (each a ChainStage → the continuous-argmax CUDA kernel). Kept
 # small (shared card). The product axis position is toggled so the fused-slice writes hit pdim ≠ 1.
 
 # `n` uniform MarkovStage factors joined along :group (axis position toggled by `group_first`).
@@ -258,7 +252,7 @@ function build_prod_markov(; n::Int, group_first::Bool)
         GriddedLayout(:z => Discrete([0.5, 1.5]), :group => Discrete([1]))
     s  = MarkovStage(layout; axis = :z, transition_matrix = P)
     ps = product(ntuple(_ -> s, n)...; axis = :group)
-    osz = layout_size(output_layout(ps)); isz = layout_size(input_layout(ps))
+    osz = layout_size(end_layout(ps)); isz = layout_size(start_layout(ps))
     V_end = reshape(collect(range(-1.0, 1.0; length = prod(osz))), osz)
     Λ = rand(isz...); Λ ./= sum(Λ)
     (ps, V_end, Λ, NamedTuple())
@@ -272,7 +266,7 @@ function build_prod_cs(; n_w::Int = 9)
         :group  => Discrete([1]))
     cs = ConsumptionSavingsStage(layout; β = 0.96, utility = (cell, c; env) -> log(c), axis = :wealth)
     ps = product(cs, cs; axis = :group)
-    isz = layout_size(input_layout(ps))
+    isz = layout_size(start_layout(ps))
     V_end = [0.1 * w + 0.05 * y for w in 1:n_w, y in 1:3, g in 1:2]
     Λ = rand(isz...); Λ ./= sum(Λ)
     (ps, V_end, Λ, NamedTuple())
@@ -285,13 +279,15 @@ const PRODUCT_CASES = [
 ]
 
 # --- MixingStage / RetentionStage builders --------------------------------
-# The closed-form rung-(a) blend `V = b + c*(a−b)` is TWO MarkovStage backward applies (dense `mul!`,
-# the modern device path) plus a pointwise Fenchel conjugate `c*` and policy `θ*`, both broadcast.
-# `to_device(::MixingStage,…)` recurses into the bundled `markA`/`markB` and rides the policy/V/Λ
-# scratch along; the spec (K_A/K_B matrices, closures) stays host-side. RetentionStage is the
-# `K_A = I` special case. The mixing axis position is toggled (leading vs non-leading) to drive the
-# Markov sub-applies' permute branch. Value AND seated policy θ* are checked (tight: the dense `mul!`
-# may reassociate ~1e-13, and θ* is a continuous clamp of the matmul output).
+# The closed-form blend `V = b + θ*·(a−b) − cost(θ*)` is TWO DenseKernel backward applies
+# (batched `mul!`, the dense device path) plus pointwise broadcasts for the frozen policy θ* and
+# the conjugate value — no bespoke ext code. The primitive-stage relocation rule carries the
+# `MixingKernel` (both seated DenseKernels + the θstar field) across, along with the io scratch and
+# `kernel_scratch` (the two dense plans plus the `mixA`/`mixB` blend workspaces);
+# the spec (K_A/K_B matrices, closures) stays host-side. RetentionStage is the `K_A = I` special case.
+# The mixing axis position is toggled (leading vs non-leading) to drive the dense sub-applies'
+# permute branch. Value AND seated policy θ* are checked (tight: the dense `mul!` may reassociate
+# ~1e-13, and θ* is a continuous clamp of the matmul output).
 
 # A small row-stochastic transition on a size-`n` axis (rows sum to 1; deterministic-free so the
 # blend is non-degenerate).
@@ -344,7 +340,7 @@ function mixing_cpu_gpu_compare(stage, V_end, Λ_start, env)
 
     gstage  = gpu_stage(stage)
     V_gpu   = Array(backward!(gstage, to_dev(V_end), env))
-    on_dev  = gstage.buffer.policy isa CuArray && gstage.buffer.V_start isa CuArray
+    on_dev  = gstage.kernel.θstar isa CuArray && gstage.scratch.V_start isa CuArray
     pol_gpu = Array(policy(gstage))
     Λ_gpu   = Array(forward!(gstage, to_dev(Λ_start)))
 
@@ -357,10 +353,9 @@ end
 # --- DiscreteMoveStage builders (integer-destination gather) --------------
 # The nearest-INDEX deterministic move: backward is the adjoint of the integer scatter — a gather
 # `V_start[cell] = V_end[ν(cell)]` where `ν` is the DETERMINISTIC snapped destination (NOT an argmax
-# over the axis — that gated case is the `:brute` kernel). The gather is the device port of the CPU
-# `_gather_along!`; a pure relocation copy, so value AND policy must be bit-identical (Δ == 0). The
-# forward (integer scatter) reuses `_cs_forward_scatter!`. We exercise the operative axis leading
-# (WD == 1, no-permute branch) and non-leading (WD == 3, `_to_front`/`_from_front!` branch).
+# over the axis — that gated case is the brute kernel). Both verbs are the shared fiber ops
+# (`NearestGatherOp`, `NearestScatterOp`) ported to the device. The operative axis is exercised
+# leading (WD == 1, contiguous fibers) and non-leading (WD == 3, strided fibers).
 
 # Off-grid destination `0.5·wealth + income`, snapped to the nearest wealth INDEX.
 function build_discrete_move(; wfirst::Bool)
@@ -403,20 +398,18 @@ function discrete_move_cpu_gpu_compare(stage, V_end, Λ_start, env)
 end
 
 # --- ContinuousArgmaxStage builders (off-grid 1-D maximiser) --------------
-# The off-grid sibling of the discrete `:brute` argmax: per origin cell a CONTINUOUS max of
-# `reward(x, a') + interp(V_end, a')` via a coarse grid scan (to bracket) then a 45-iteration
-# golden-section refine, writing a FLOAT policy position into the InterpKernel. The device kernel
-# evaluates the user payoff CLOSURE on-device and reuses the SAME `_interp1d`/`_golden_max` as the CPU
-# (only `env_dep` is lifted to a compile-time `Val` to elide the dead payoff branch). It is therefore
-# NOT bit-identical: the value matches to sub-ulp (observed ≤1.7e-16, one case exactly 0), but the float
-# policy position drifts ~1e-8. That drift is the golden-section's own resolution floor near the FLAT
-# optimum — at convergence `fc ≈ fd`, so float-reassociation noise (GPU FMA contraction) flips a late
-# golden step, landing on a position ~the-then-bracket-width away. Same bracketing grid interval, same
-# answer, only sub-position drift — the inherent float-nondeterminism of a derivative-free optimiser,
-# not a wrong optimum. Tolerances below are set to those observed magnitudes, explicitly NOT 0.
+# Both backends run THE SAME shared source per column — `_ca_divide_conquer_walk!` for the best
+# grid node over the materialised reward face, then the closed-form PARABOLIC vertex
+# `_caC_refine_vertex` for the FLOAT policy position — so CPU and GPU differ only in the outer loop
+# (column sweep vs one thread per front-permuted column). The payoff never runs on the device; only
+# the face (filled host-side) is consumed. The result is NOT bit-identical: the node value matches
+# to sub-ulp (the same adds in the same order), but the vertex is a ratio of node-value differences,
+# so GPU FMA contraction can perturb the float policy's last few bits near a flat optimum. Same
+# bracketing interval, same answer, only sub-position drift — not a wrong optimum. Tolerances below
+# are set to the observed magnitudes, explicitly NOT 0.
 
-const CA_VAL_ATOL = 1e-12     # value: observed ≤1.7e-16 (sub-ulp); 1e-12 a tight, justified ceiling
-const CA_POL_ATOL = 1e-6      # float policy position: observed ≤1.1e-8 (golden-section resolution floor)
+const CA_VAL_ATOL = 1e-12     # node value: observed sub-ulp; 1e-12 a tight, justified ceiling
+const CA_POL_ATOL = 1e-6      # float policy position: parabolic-vertex FMA-reassociation drift (few ulp)
 const CA_FWD_ATOL = 1e-7      # Young-split forward through the drifted position: observed ≤1.3e-9
 
 # 1-D, no env, operative axis leading.
@@ -481,17 +474,45 @@ function build_ca_env_nonleading()
     (stage, V_end, Λ, (t = 1.0,))
 end
 
+# Bimodal reward: two wells at a' = 0.2 and 0.8 with the argmax crossing at x = env.b, which the
+# origin grid straddles — so the device runs the switch detector and the two-mode seating, not only
+# the vertex. Without such a case the device gate never reaches the branch.
+bimodal_reward(x, ap; env) = x * ap - env.b * ap - 40 * (ap - 0.2)^2 * (ap - 0.8)^2
+
+function build_ca_bimodal_leading()
+    N      = 21
+    grid   = collect(range(0.0, 1.0; length = N))
+    layout = GriddedLayout(:a => GriddedContinuous(grid))
+    stage  = ContinuousArgmaxStage(layout; reward = bimodal_reward, axis = :a)
+    Random.seed!(20260805); Λ = rand(N); Λ ./= sum(Λ)
+    (stage, zeros(N), Λ, (b = 0.54,))
+end
+
+function build_ca_bimodal_nonleading()
+    N      = 21
+    grid   = collect(range(0.0, 1.0; length = N))
+    layout = GriddedLayout(:y => Discrete([0.5, 1.5]), :a => GriddedContinuous(grid))
+    stage  = ContinuousArgmaxStage(layout; reward = bimodal_reward, axis = :a)
+    Random.seed!(20260806); Λ = rand(2, N); Λ ./= sum(Λ)
+    (stage, zeros(2, N), Λ, (b = 0.54,))
+end
+
 const CA_CASES = [
     ("ContinuousArgmax (no-env, leading)",  build_ca_1d_leading),
     ("ContinuousArgmax (dep-z, leading)",   build_ca_dep_leading),
     ("ContinuousArgmax (env, leading)",     build_ca_env_leading),
     ("ContinuousArgmax (dep-z, non-lead)",  build_ca_dep_nonleading),
     ("ContinuousArgmax (env, non-lead)",    build_ca_env_nonleading),
+    ("ContinuousArgmax (bimodal, leading)", build_ca_bimodal_leading),
+    ("ContinuousArgmax (bimodal, non-lead)",build_ca_bimodal_nonleading),
 ]
 
-# Run one ContinuousArgmax stage CPU vs GPU. Returns (vΔ, pΔ, fΔ, all-finite). Value is sub-ulp, the
-# float policy position drifts ~1e-8 (the optimiser's resolution floor), forward ~1e-9 — all matched
-# against the explicit, justified tolerances above, NOT bit-identical.
+# How many cells each backend seated as a two-mode lottery, and whether they are the same cells. A
+# vertex that drifts across a node moves a bracket by one index but can never widen it past one, so
+# the straddled set is the branch's own signature and is compared exactly.
+straddled(k) = findall(>(Int32(1)), Array(k.hi) .- Array(k.lo))
+
+# Run one ContinuousArgmax stage CPU vs GPU, held to the tolerances above rather than bit-for-bit.
 function ca_cpu_gpu_compare(stage, V_end, Λ_start, env)
     V_cpu   = copy(backward!(stage, V_end, env))
     pol_cpu = copy(policy(stage))
@@ -506,156 +527,163 @@ function ca_cpu_gpu_compare(stage, V_end, Λ_start, env)
     pΔ     = maximum(abs.(pol_gpu .- pol_cpu))
     fΔ     = maximum(abs.(Λ_gpu .- Λ_cpu))
     finite = all(isfinite, V_gpu) && (eltype(pol_gpu) === Float64)
-    return (vΔ, pΔ, fΔ, finite)
+    sw     = straddled(stage.kernel)
+    return (vΔ, pΔ, fΔ, finite, sw, straddled(gstage.kernel) == sw)
 end
 
-# --- SearchMatchingStage builders (internal-effort discrete argmax) -------
-# The unemployed value is a discrete max over an INTERNAL effort grid (never a state axis):
-# `Vu_new = maxₖ −cost[k] + pe[k]·Ve + (1−pe[k])·Vu`, with the maximiser index → the effort policy
-# and `pe[k*]` cached for the forward replay; the employed value is the separation mix
-# `(1−δ)·Ve + δ·Vu`. The device FUSES the per-effort scan into one thread per non-labor cell (no `Q`
-# tensor), mirroring the CPU `findmax` argmax (same left-associated objective, same first-index
-# tie-break). It is a discrete max over a FIXED grid, so the discrete CHOICE is bit-identical — the
-# effort policy index `polmis == 0` and the cached `p = pe[k*]` Δ == 0 (exact gather through the
-# identical policy). The VALUE is NOT bit-identical, unlike `:brute` (whose inner op is a pure add):
-# the per-effort objective and the separation mix are multiply-adds, which the device contracts to
-# FMA — a one-ulp drift (observed ≤2.2e-16). So value is value-exact-to-sub-ulp, policy + p exact.
-# Both labor-axis positions (leading / non-leading) drive the permute-to-front branch.
+# --- continuous-θ Gaussian builders (MeanPreservingSpread / GaussianLoading) ------
+# The two streaming kernel-choice siblings share the banded Gaussian-row primitives and the
+# scan+Newton solver, and the SAME device story: CPU and GPU differ not only by FMA contraction
+# but by erf IMPLEMENTATION (openlibm vs libdevice, ulp-level), and the per-cell Newton solve
+# AMPLIFIES that ulp drift through the FOC — so the float θ* policy gets a loose *_POL_ATOL and
+# the value/forward budgets sit between the bit-exact discrete families and the CA float-vertex
+# family. MeanPreservingSpread moves the WEIGHTS (mean fixed at x, sd θ); GaussianLoading moves the
+# LANDING (mean w·(anchor + θμ), sd |w|θσ) — each gets its own cases at both axis positions.
 
-const SAM_VAL_ATOL = 1e-12     # value: observed ≤2.2e-16 (one ulp); FMA contraction of the hazard/Q multiply-adds
-const SAM_FWD_ATOL = 1e-12     # forward replay through the (bit-identical) policy/p: observed ≤1.4e-17
+const MPS_VAL_ATOL = 1e-9     # envelope value: erf ulp drift, flat objective at θ* ⇒ second-order in pΔ
+const MPS_POL_ATOL = 1e-6     # float θ* policy: Newton amplifies the libdevice-vs-openlibm erf divergence
+const MPS_FWD_ATOL = 1e-7     # forward replay through the seated Gaussian row at (possibly drifted) θ*
 
-# Two-level labor axis × wealth; θ drives job-finding via a host closure (run host-side, never on
-# device — only the pre-evaluated numeric effort vectors reach the kernel). `emp_first` toggles the
-# labor-axis position (leading → no-op permute; non-leading → `_to_front`/`_from_front!`). The
-# continuation is separated (employed > unemployed) so the effort argmax has a well-defined optimum.
-function build_sam(; emp_first::Bool, n_w = 6)
-    efforts = collect(range(0.0, 2.0; length = 6))
-    cost    = e -> 0.5 * e^2
-    jf      = (e, θ) -> 1 - exp(-e * θ)
-    grid    = collect(range(0.0, 3.0; length = n_w))
-    layout  = emp_first ?
-        GriddedLayout(:emp => Discrete([:u, :e]), :wealth => GriddedContinuous(grid)) :
-        GriddedLayout(:wealth => GriddedContinuous(grid), :emp => Discrete([:u, :e]))
-    stage = SearchMatchingStage(layout; axis = :emp, efforts = efforts,
-                                cost = cost, job_finding = jf,
-                                separation = 0.10, tightness = FromEnv(:θ))
-    V_end = emp_first ?
-        [l == 1 ? 0.2 * w : 1.0 + 0.2 * w for l in 1:2, w in 1:n_w] :
-        [l == 1 ? 0.2 * w : 1.0 + 0.2 * w for w in 1:n_w, l in 1:2]
-    Random.seed!(20260629)
-    Λ = emp_first ? rand(2, n_w) : rand(n_w, 2); Λ ./= sum(Λ)
-    (stage, V_end, Λ, (θ = 1.0,))
-end
-
-const SAM_CASES = [
-    ("SearchMatching (emp leading)",     () -> build_sam(emp_first = true)),
-    ("SearchMatching (emp non-leading)", () -> build_sam(emp_first = false)),
-]
-
-# Run one SearchMatchingStage CPU vs GPU. Returns (vΔ, polmis, pΔ, fΔ, on_dev). The discrete effort
-# policy and the cached `p` are bit-identical (polmis == 0, pΔ == 0); the value is sub-ulp (FMA);
-# the forward replay is sub-ulp.
-function sam_cpu_gpu_compare(stage, V_end, Λ_start, env)
-    V_cpu   = copy(backward!(stage, V_end, env))
-    pol_cpu = copy(stage.kernel.policy)
-    p_cpu   = copy(stage.kernel.p)
-    Λ_cpu   = copy(forward!(stage, Λ_start))
-
-    gstage  = gpu_stage(stage)
-    V_gpu   = Array(backward!(gstage, to_dev(V_end), env))
-    on_dev  = gstage.kernel.policy isa CuArray && gstage.kernel.p isa CuArray
-    pol_gpu = Array(gstage.kernel.policy)
-    p_gpu   = Array(gstage.kernel.p)
-    Λ_gpu   = Array(forward!(gstage, to_dev(Λ_start)))
-
-    vΔ     = maximum(abs.(V_gpu .- V_cpu))
-    polmis = count(pol_gpu .!= pol_cpu)
-    pΔ     = maximum(abs.(p_gpu .- p_cpu))
-    fΔ     = maximum(abs.(Λ_gpu .- Λ_cpu))
-    return (vΔ, polmis, pΔ, fΔ, on_dev)
-end
-
-# --- streaming kernel-choice builders (MeanVariance / ScaleVariance) ------
-# The streaming kernel-choice family: the household picks a per-cell scalar θ from a fixed grid along
-# the choice axis. backward (the θ choice) FUSES the per-θ clamped-interp gather + per-θ cost + running
-# argmax into one thread per non-axis column (mirroring the SearchMatching fuse); forward (the replay)
-# is the per-cell Young-split scatter (one thread owns each column ⇒ no atomics). Because the θ grid is
-# FIXED, the seated θ* policy is bit-identical to the CPU (same gather, same `acc − cost` objective,
-# same strict-`>` first-θ tie-break); the VALUE is value-exact-to-sub-ulp — the gather's
-# `weights·((1−w)V + wV)` multiply-adds and the forward's `m·(1−w)` split contract to FMA on device, a
-# one-ulp drift (like SearchMatching, NOT bit-identical). MeanVariance (multiplicative portfolio
-# return) and ScaleVariance (additive mean-preserving spread) share the SAME device kernels, split only
-# by a compile-time landing-family tag. Both axis positions (leading / non-leading) drive the permute.
-
-const KC_VAL_ATOL = 1e-12     # value: FMA contraction of the gather/scatter multiply-adds (observed sub-ulp)
-const KC_FWD_ATOL = 1e-12     # forward replay: FMA on the Young-split `m·(1−w)` (observed sub-ulp)
-
-# MeanVariance (portfolio share θ on wealth): concave √-wealth V ⇒ interior share. `wfirst` toggles
-# the choice-axis position. Grid chosen so the up-returns stay interior (exercise off-clamp interp).
-function build_meanvar(; wfirst::Bool)
-    ws     = collect(0.5:0.25:8.0); nw = length(ws)
-    shares = [0.0, 0.25, 0.5, 0.75, 1.0]
-    Rf     = 1.02
-    Rrisky = [0.7, 1.4]
-    probs  = [0.5, 0.5]
-    layout = wfirst ?
-        GriddedLayout(:wealth => GriddedContinuous(ws), :z => Discrete([0.5, 1.5])) :
-        GriddedLayout(:z => Discrete([0.5, 1.5]), :wealth => GriddedContinuous(ws))
-    stage  = MeanVarianceStage(layout; axis = :wealth, shares = shares,
-                               risk_free = Rf, risky_returns = Rrisky, probs = probs,
-                               cost = (θ; env) -> 0.01 * θ^2)
-    V_end  = wfirst ? [sqrt(w) + 0.1 * z for w in ws, z in [0.5, 1.5]] :
-                      [0.1 * z + sqrt(w) for z in [0.5, 1.5], w in ws]
-    Random.seed!(20260629)
-    Λ = wfirst ? rand(nw, 2) : rand(2, nw); Λ ./= sum(Λ)
-    (stage, V_end, Λ, NamedTuple())
-end
-
-# ScaleVariance (mean-preserving-spread dispersion θ): convex-flanked V ⇒ interior θ. `xfirst` toggles
-# the choice-axis position; a per-θ vector cost exercises the `_cost_at(::AbstractVector)` path.
-function build_scalevar(; xfirst::Bool)
-    xs   = collect(0.0:0.5:10.0); nx = length(xs)
-    shk  = [-1.0, 1.0]; wts = [0.5, 0.5]
-    disp = [0.0, 0.5, 1.0, 1.5, 2.0]
-    cost = [0.0, 0.05, 0.2, 0.45, 0.8]
+# MeanPreservingSpread (continuous dispersion θ, Gaussian-Young row): convex-flanked V ⇒ interior θ
+# solved by the on-device scan+Newton; the env-reading closure cost exercises the device cost-closure
+# seam (isbits gate). `xfirst` toggles the choice-axis position.
+function build_mps(; xfirst::Bool)
+    xs = collect(0.0:0.5:10.0); nx = length(xs)
     layout = xfirst ?
         GriddedLayout(:x => GriddedContinuous(xs), :z => Discrete([0.5, 1.5])) :
         GriddedLayout(:z => Discrete([0.5, 1.5]), :x => GriddedContinuous(xs))
-    stage  = ScaleVarianceStage(layout; axis = :x, dispersions = disp,
-                                shocks = shk, weights = wts, cost = cost)
+    stage  = MeanPreservingSpreadStage(layout; axis = :x, θ_max = 2.0,
+                                       cost = (θ; env) -> env.λ * θ^2)
     Vb     = @. 2.0 * exp(-(xs - 5.0)^2 / 4.0)
     V_end  = xfirst ? [Vb[i] + 0.1 * z for i in 1:nx, z in [0.5, 1.5]] :
                       [0.1 * z + Vb[i] for z in [0.5, 1.5], i in 1:nx]
     Random.seed!(20260630)
     Λ = xfirst ? rand(nx, 2) : rand(2, nx); Λ ./= sum(Λ)
+    (stage, V_end, Λ, (; λ = 0.05))
+end
+
+const GL_VAL_ATOL = 1e-12     # envelope value at the frozen θ*: flat objective ⇒ second-order in pΔ
+const GL_POL_ATOL = 1e-6      # float θ* policy: Newton amplifies the libdevice-vs-openlibm erf divergence
+const GL_FWD_ATOL = 1e-7      # forward replay through the seated Gaussian row at (possibly drifted) θ*
+
+# GaussianLoading (continuous loading θ, here the risky share on a truncated-Gaussian gross
+# return): concave √-wealth V ⇒ interior θ solved by the on-device scan+Newton; the nonzero cost captures a SCALAR so the
+# closure stays isbits (the device cost-closure gate). Positive grid keeps s = |w|θσ > 0 off the
+# deterministic branch at interior θ. `wfirst` toggles the choice-axis position.
+function build_gl_gauss(; wfirst::Bool)
+    ws = collect(0.5:0.25:8.0); nw = length(ws)
+    κc = 0.01                                     # captured scalar ⇒ isbits closure
+    layout = wfirst ?
+        GriddedLayout(:wealth => GriddedContinuous(ws), :z => Discrete([0.5, 1.5])) :
+        GriddedLayout(:z => Discrete([0.5, 1.5]), :wealth => GriddedContinuous(ws))
+    stage  = GaussianLoadingStage(layout; axis = :wealth, anchor = 1.02,
+                               increment_mean = 0.03, increment_sd = 0.2,
+                               cost = (θ; env) -> κc * θ^2)
+    V_end  = wfirst ? [sqrt(w) + 0.1 * z for w in ws, z in [0.5, 1.5]] :
+                      [0.1 * z + sqrt(w) for z in [0.5, 1.5], w in ws]
+    Random.seed!(20260729)
+    Λ = wfirst ? rand(nw, 2) : rand(2, nw); Λ ./= sum(Λ)
     (stage, V_end, Λ, NamedTuple())
 end
 
-const KERNEL_CHOICE_CASES = [
-    ("MeanVariance  (wealth leading)",      () -> build_meanvar(wfirst = true)),
-    ("MeanVariance  (wealth non-leading)",  () -> build_meanvar(wfirst = false)),
-    ("ScaleVariance (x leading)",           () -> build_scalevar(xfirst = true)),
-    ("ScaleVariance (x non-leading)",       () -> build_scalevar(xfirst = false)),
+const MPS_CASES = [
+    ("MeanPreservingSpread (x leading)",     () -> build_mps(xfirst = true)),
+    ("MeanPreservingSpread (x non-leading)", () -> build_mps(xfirst = false)),
 ]
 
-# Run one streaming kernel-choice stage CPU vs GPU. Returns (vΔ, polmis, fwΔ, on_dev): value sub-ulp,
-# the seated θ* policy bit-identical (fixed grid, first-θ tie-break), forward replay sub-ulp.
-function kernel_choice_cpu_gpu_compare(stage, V_end, Λ_start, env)
+const GL_CASES = [
+    ("GaussianLoading (wealth leading)",     () -> build_gl_gauss(wfirst = true)),
+    ("GaussianLoading (wealth non-leading)", () -> build_gl_gauss(wfirst = false)),
+]
+
+# Run one continuous-θ Gaussian stage (MeanPreservingSpread OR GaussianLoading — both seat a
+# `kernel.θstar` field) CPU vs GPU. `on_dev` covers the plan's two griddings as well as θ*: a
+# host-resident grid still gives the right answers (the extension re-uploads it per call) and would
+# slip through the value comparison, so it needs its own assertion.
+function mps_cpu_gpu_compare(stage, V_end, Λ_start, env)
     V_cpu   = copy(backward!(stage, V_end, env))
     pol_cpu = copy(policy(stage))
     Λ_cpu   = copy(forward!(stage, Λ_start))
 
     gstage  = gpu_stage(stage)
     V_gpu   = Array(backward!(gstage, to_dev(V_end), env))
-    on_dev  = gstage.kernel.θstar isa CuArray
+    on_dev  = gstage.kernel.θstar isa CuArray &&
+              gstage.scratch.kernel_scratch.origin_grid isa CuArray &&
+              gstage.scratch.kernel_scratch.dest_grid   isa CuArray
     pol_gpu = Array(policy(gstage))
     Λ_gpu   = Array(forward!(gstage, to_dev(Λ_start)))
 
-    vΔ     = maximum(abs.(V_gpu .- V_cpu))
-    polmis = count(pol_gpu .!= pol_cpu)
-    fwΔ    = maximum(abs.(Λ_gpu .- Λ_cpu))
-    return (vΔ, polmis, fwΔ, on_dev)
+    vΔ  = maximum(abs.(V_gpu .- V_cpu))
+    pΔ  = maximum(abs.(pol_gpu .- pol_cpu))
+    fwΔ = maximum(abs.(Λ_gpu .- Λ_cpu))
+    return (vΔ, pΔ, fwΔ, on_dev)
+end
+
+# --- env-resolved array payoff builders -----------------------------------
+# A `FromEnv` payoff whose env value is a layout-shaped ARRAY. The stage seats it into a
+# `ScalarField`, and every refill of a relocated field routes the host-built values through the
+# relocation target ON the way in: the next broadcast (`V_start .= payoff .+ V_end`,
+# `Λ_end .= Λ_start .+ kernel.g`, `destinations(kernel) .= …`) mixes the payoff with device tensors
+# and will not compile against a host array. The three stages below are the three shapes that reach
+# a `ScalarField` — an additive value payoff, an additive measure source, and a per-cell
+# destination — each run in both relocation orders (see `fromenv_cpu_gpu_compare`).
+
+const FROMENV_LAYOUT = GriddedLayout(:x => GriddedContinuous([0.0, 1.0, 2.0]),
+                                     :z => Discrete([0.5, 1.5]))
+
+# A deterministic layout-shaped mass, normalised — no RNG, so the comparison is reproducible.
+_fromenv_mass(m, n) = (Λ = [0.1 * i + 0.05 * j for i in 1:m, j in 1:n]; Λ ./ sum(Λ))
+
+# UtilityStage with `utility = FromEnv(:u)`: the value payoff is an env array.
+function build_utility_fromenv()
+    stage = UtilityStage(FROMENV_LAYOUT; utility = FromEnv(:u))
+    u     = [0.5 * i + 0.25 * j for i in 1:3, j in 1:2]
+    V_end = [0.1 * i + 0.2 * j for i in 1:3, j in 1:2]
+    (stage, V_end, _fromenv_mass(3, 2), (u = u,))
+end
+
+# EntryStage with `entry = FromEnv(:g)`: the measure source is an env array.
+function build_entry_fromenv()
+    stage = EntryStage(FROMENV_LAYOUT; entry = FromEnv(:g))
+    g     = [0.01 * (i + j) for i in 1:3, j in 1:2]
+    (stage, zeros(3, 2), _fromenv_mass(3, 2), (g = g,))
+end
+
+# DeterministicContinuousStage with `destination = FromEnv(:d)`: the per-cell landing is an env array.
+function build_detcont_fromenv()
+    grid   = collect(range(0.0, 4.0; length = 5))
+    layout = GriddedLayout(:wealth => GriddedContinuous(grid), :income => Discrete([0.6, 1.4]))
+    stage  = DeterministicContinuousStage(layout; destination = FromEnv(:d), axis = :wealth)
+    d      = [0.5 * w + 0.5 for w in grid, y in 1:2]
+    V_end  = [0.3 * w + 0.1 * y for w in 1:5, y in 1:2]
+    (stage, V_end, _fromenv_mass(5, 2), (d = d,))
+end
+
+const FROMENV_CASES = [
+    ("Utility (FromEnv array)",  build_utility_fromenv),
+    ("Entry   (FromEnv array)",  build_entry_fromenv),
+    ("DetCont (FromEnv array)",  build_detcont_fromenv),
+]
+
+# Run one env-resolved-array stage CPU vs GPU, in the relocation order `seat_on_host` picks:
+# `true` relocates the stage the host reference just solved, `false` relocates a freshly built one,
+# so the device refill is the first thing ever to seat the payoff — the order
+# `build → to_device → solve` gives, and the only order `to_device(lift_jacobian(stage), …)` can
+# give. Returns (on_dev, bw_ok, bw_Δ, fw_ok, fw_Δ): the device `backward!` must both agree with the
+# CPU reference and leave the refilled payoff buffer device-resident.
+function fromenv_cpu_gpu_compare(build; seat_on_host::Bool)
+    stage, V_end, Λ_start, env = build()
+    V_cpu = copy(backward!(stage, V_end, env))
+    Λ_cpu = copy(forward!(stage, Λ_start))
+
+    gstage = gpu_stage(seat_on_host ? stage : first(build()))
+    V_gpu  = Array(backward!(gstage, to_dev(V_end), env))
+    on_dev = all(f -> !(f isa ScalarField) || f.data isa CuArray, values(gstage.cache))
+    Λ_gpu  = Array(forward!(gstage, to_dev(Λ_start)))
+
+    bw_ok, bw_d = match_tight(V_gpu, V_cpu)
+    fw_ok, fw_d = match_tight(Λ_gpu, Λ_cpu)
+    return (on_dev, bw_ok, bw_d, fw_ok, fw_d)
 end
 
 # --- run ------------------------------------------------------------------
@@ -663,10 +691,13 @@ end
 const CASES = [
     ("WealthChange (wealth leading)",     build_wc_leading),
     ("WealthChange (wealth non-leading)", build_wc_nonleading),
-    ("ConsumptionSavings (seq, n_w=16)",  () -> build_cs_seq(16)),
-    ("ConsumptionSavings (pow2, n_w=17)", () -> build_cs_pow2(17)),
+    ("ConsumptionSavings (n_w=16)",       () -> build_cs_n16(16)),
+    ("ConsumptionSavings (n_w=17)",       () -> build_cs_n17(17)),
     ("ConsumptionSavings (non-leading)",  () -> build_cs_nonleading(17)),
 ]
+
+const RESIDENCY_CASES = vcat(CASES, BRUTE_CASES, DISCRETE_MOVE_CASES, CA_CASES, COLLAPSE_CASES,
+                             PRODUCT_CASES, MIXING_CASES, MPS_CASES, GL_CASES, FROMENV_CASES)
 
 function run_kernel_tests()
     @assert CUDA.functional() "CUDA not functional"
@@ -685,7 +716,7 @@ function run_kernel_tests()
             end
         end
     end
-    @testset "GPU :brute argmax (buy/sell-home, tie-heavy)" begin
+    @testset "GPU brute argmax (buy/sell-home, tie-heavy)" begin
         for (name, build) in BRUTE_CASES
             stage, V_end, Λ_start, env = build()
             vΔ, polmis, fw_ok, fw_d = brute_cpu_gpu_compare(stage, V_end, Λ_start, env)
@@ -718,40 +749,40 @@ function run_kernel_tests()
     @testset "GPU ContinuousArgmaxStage (off-grid maximiser)" begin
         for (name, build) in CA_CASES
             stage, V_end, Λ_start, env = build()
-            vΔ, pΔ, fΔ, finite = ca_cpu_gpu_compare(stage, V_end, Λ_start, env)
-            @printf("%-34s value Δ=%.2e %s   policy Δ=%.2e %s   forward Δ=%.2e %s\n",
+            vΔ, pΔ, fΔ, finite, sw, swok = ca_cpu_gpu_compare(stage, V_end, Λ_start, env)
+            @printf("%-34s value Δ=%.2e %s   policy Δ=%.2e %s   forward Δ=%.2e %s   straddled=%d %s\n",
                     name, vΔ, vΔ <= CA_VAL_ATOL ? "OK" : "FAIL",
-                    pΔ, pΔ <= CA_POL_ATOL ? "OK" : "FAIL", fΔ, fΔ <= CA_FWD_ATOL ? "OK" : "FAIL")
-            all_ok &= (vΔ <= CA_VAL_ATOL) & (pΔ <= CA_POL_ATOL) & (fΔ <= CA_FWD_ATOL) & finite
+                    pΔ, pΔ <= CA_POL_ATOL ? "OK" : "FAIL", fΔ, fΔ <= CA_FWD_ATOL ? "OK" : "FAIL",
+                    length(sw), swok ? "OK" : "FAIL")
+            all_ok &= (vΔ <= CA_VAL_ATOL) & (pΔ <= CA_POL_ATOL) & (fΔ <= CA_FWD_ATOL) & finite & swok
             @testset "$name" begin
                 @test finite                # value finite everywhere; policy a Float64 position
                 @test vΔ <= CA_VAL_ATOL     # value sub-ulp (same optimum)
-                @test pΔ <= CA_POL_ATOL     # float policy position at the golden-section floor
-                @test fΔ <= CA_FWD_ATOL     # Young-split forward through the seated position
+                @test pΔ <= CA_POL_ATOL     # float policy position: parabolic-vertex FMA drift
+                @test fΔ <= CA_FWD_ATOL     # the seated split replayed forward
+                @test swok                  # the same bins straddle a switch on both backends
+                occursin("bimodal", name) && @test !isempty(sw)   # the branch is actually reached
             end
         end
     end
     @testset "GPU choice-collapse forward (grown scatter axis)" begin
         for (name, build) in COLLAPSE_CASES
             stage, V_end, Λ_start, env = build()
-            # `cpu_gpu_compare` seats each side's policy (backward!) before forward!. The
-            # forward scatter is the ext fix's target: the source choice axis is size 1, so
-            # each destination cell is written exactly once ⇒ bit-identical (Δ == 0), no
-            # collision-order drift. Backward is the brute kernel (already FULL; tight match).
+            # `cpu_gpu_compare` seats each side's policy (backward!) before forward!.
             bw_ok, bw_d, fw_ok, fw_d = cpu_gpu_compare(stage, V_end, Λ_start, env)
             @printf("%-34s backward Δ=%.2e %s   forward Δ=%.2e %s\n",
                     name, bw_d, bw_ok ? "OK" : "FAIL", fw_d, fw_d == 0 ? "OK" : "FAIL")
             all_ok &= bw_ok & (fw_d == 0)
             @testset "$name" begin
-                @test fw_d == 0         # forward scatter bit-identical (the fix's target)
-                @test bw_ok             # backward matches (tight; brute kernel already FULL)
+                @test fw_d == 0         # forward scatter bit-identical: one write per destination
+                @test bw_ok             # backward (the brute kernel) matches, tight
             end
         end
     end
     @testset "GPU ProductStage (⊕ direct sum)" begin
         for (name, build) in PRODUCT_CASES
             stage, V_end, Λ_start, env = build()
-            # The fix moves the product's fused tensors to the device too — assert they actually
+            # Relocation carries the product's fused tensors to the device too — assert they actually
             # landed on-device (a silent host round-trip would still pass the value match but defeat
             # the lift). Then compare CPU vs GPU backward/forward via the shared tight match.
             gstage = gpu_stage(stage)
@@ -770,10 +801,10 @@ function run_kernel_tests()
     @testset "GPU MixingStage / RetentionStage (closed-form blend)" begin
         for (name, build) in MIXING_CASES
             stage, V_end, Λ_start, env = build()
-            # The lift moves the bundled markA/markB sub-stages and the policy/V/Λ scratch to the
-            # device — assert the scratch actually landed (a silent host round-trip would still
-            # pass the value match but defeat the lift). Value, seated θ*, and forward all tight
-            # (the two Markov applies are dense `mul!`, which may reassociate ~1e-13 on device).
+            # The generic lift moves the MixingKernel (both seated DenseKernels + θstar)
+            # and the V/Λ/mix scratch to the device — assert they actually landed (a silent host
+            # round-trip would still pass the value match but defeat the lift). Value, seated θ*,
+            # and forward all tight (the dense `mul!` may reassociate ~1e-13 on device).
             on_dev, bw_ok, bw_d, pol_ok, pol_d, fw_ok, fw_d =
                 mixing_cpu_gpu_compare(stage, V_end, Λ_start, env)
             @printf("%-30s on-dev %s   backward Δ=%.2e %s   policy Δ=%.2e %s   forward Δ=%.2e %s\n",
@@ -781,44 +812,73 @@ function run_kernel_tests()
                     pol_d, pol_ok ? "OK" : "FAIL", fw_d, fw_ok ? "OK" : "FAIL")
             all_ok &= on_dev & bw_ok & pol_ok & fw_ok
             @testset "$name" begin
-                @test on_dev            # policy/V scratch live on the device (the lift's core step)
+                @test on_dev            # kernel θ* and V scratch live on the device (the lift's core step)
                 @test bw_ok             # backward value matches the CPU reference (tight)
                 @test pol_ok            # seated mixing policy θ* matches (tight)
-                @test fw_ok             # forward (blended push through markA/markB) matches (tight)
+                @test fw_ok             # forward (blended push through kA/kB) matches (tight)
             end
         end
     end
-    @testset "GPU SearchMatchingStage (internal-effort discrete argmax)" begin
-        for (name, build) in SAM_CASES
+    @testset "GPU MeanPreservingSpread (continuous-θ Gaussian-Young)" begin
+        for (name, build) in MPS_CASES
             stage, V_end, Λ_start, env = build()
-            vΔ, polmis, pΔ, fΔ, on_dev = sam_cpu_gpu_compare(stage, V_end, Λ_start, env)
-            @printf("%-34s value Δ=%.2e %s   policy mism=%d %s   pΔ=%.2e %s   forward Δ=%.2e %s\n",
-                    name, vΔ, vΔ <= SAM_VAL_ATOL ? "OK" : "FAIL",
-                    polmis, polmis == 0 ? "OK" : "FAIL",
-                    pΔ, pΔ == 0 ? "OK" : "FAIL", fΔ, fΔ <= SAM_FWD_ATOL ? "OK" : "FAIL")
-            all_ok &= (vΔ <= SAM_VAL_ATOL) & (polmis == 0) & (pΔ == 0) & (fΔ <= SAM_FWD_ATOL) & on_dev
+            vΔ, pΔ, fwΔ, on_dev = mps_cpu_gpu_compare(stage, V_end, Λ_start, env)
+            @printf("%-38s value Δ=%.2e %s   policy Δ=%.2e %s   forward Δ=%.2e %s\n",
+                    name, vΔ, vΔ <= MPS_VAL_ATOL ? "OK" : "FAIL",
+                    pΔ, pΔ <= MPS_POL_ATOL ? "OK" : "FAIL", fwΔ, fwΔ <= MPS_FWD_ATOL ? "OK" : "FAIL")
+            all_ok &= (vΔ <= MPS_VAL_ATOL) & (pΔ <= MPS_POL_ATOL) & (fwΔ <= MPS_FWD_ATOL) & on_dev
             @testset "$name" begin
-                @test on_dev               # policy/p live on the device (the fused kernel's outputs)
-                @test polmis == 0          # effort policy index bit-identical (the discrete choice)
-                @test pΔ == 0              # cached p = pe[k*] exact (gather through the identical policy)
-                @test vΔ <= SAM_VAL_ATOL    # value sub-ulp (FMA contraction of the hazard/Q multiply-adds)
-                @test fΔ <= SAM_FWD_ATOL    # forward replay sub-ulp
+                @test on_dev               # per-cell θ* policy AND plan grid live on the device
+                @test pΔ <= MPS_POL_ATOL   # float θ*: Newton-amplified erf-implementation drift
+                @test vΔ <= MPS_VAL_ATOL   # envelope value (flat in θ at θ* ⇒ second-order in pΔ)
+                @test fwΔ <= MPS_FWD_ATOL  # forward replay through the seated Gaussian row
             end
         end
     end
-    @testset "GPU streaming kernel-choice (MeanVariance / ScaleVariance)" begin
-        for (name, build) in KERNEL_CHOICE_CASES
+    @testset "GPU GaussianLoading (continuous-θ)" begin
+        for (name, build) in GL_CASES
             stage, V_end, Λ_start, env = build()
-            vΔ, polmis, fwΔ, on_dev = kernel_choice_cpu_gpu_compare(stage, V_end, Λ_start, env)
-            @printf("%-34s value Δ=%.2e %s   policy mism=%d %s   forward Δ=%.2e %s\n",
-                    name, vΔ, vΔ <= KC_VAL_ATOL ? "OK" : "FAIL",
-                    polmis, polmis == 0 ? "OK" : "FAIL", fwΔ, fwΔ <= KC_FWD_ATOL ? "OK" : "FAIL")
-            all_ok &= (vΔ <= KC_VAL_ATOL) & (polmis == 0) & (fwΔ <= KC_FWD_ATOL) & on_dev
+            vΔ, pΔ, fwΔ, on_dev = mps_cpu_gpu_compare(stage, V_end, Λ_start, env)
+            @printf("%-38s value Δ=%.2e %s   policy Δ=%.2e %s   forward Δ=%.2e %s\n",
+                    name, vΔ, vΔ <= GL_VAL_ATOL ? "OK" : "FAIL",
+                    pΔ, pΔ <= GL_POL_ATOL ? "OK" : "FAIL", fwΔ, fwΔ <= GL_FWD_ATOL ? "OK" : "FAIL")
+            all_ok &= (vΔ <= GL_VAL_ATOL) & (pΔ <= GL_POL_ATOL) & (fwΔ <= GL_FWD_ATOL) & on_dev
             @testset "$name" begin
-                @test on_dev               # the per-cell θ* policy lives on the device
-                @test polmis == 0          # seated θ* bit-identical (fixed grid, first-θ tie-break)
-                @test vΔ <= KC_VAL_ATOL    # value sub-ulp (FMA on the gather multiply-adds)
-                @test fwΔ <= KC_FWD_ATOL   # forward replay sub-ulp (FMA on the Young-split)
+                @test on_dev               # per-cell θ* policy AND plan grid live on the device
+                @test pΔ <= GL_POL_ATOL    # float θ*: Newton-amplified erf-implementation drift
+                @test vΔ <= GL_VAL_ATOL    # envelope value (flat in θ at θ* ⇒ second-order in pΔ)
+                @test fwΔ <= GL_FWD_ATOL   # forward replay through the seated Gaussian row
+            end
+        end
+    end
+    @testset "GPU env-resolved array payoffs (FromEnv fields)" begin
+        for (name, build) in FROMENV_CASES, seat_on_host in (true, false)
+            order = seat_on_host ? "solve→relocate" : "relocate→solve"
+            on_dev, bw_ok, bw_d, fw_ok, fw_d = fromenv_cpu_gpu_compare(build; seat_on_host)
+            @printf("%-24s %-15s payoff-on-dev %s   backward Δ=%.2e %s   forward Δ=%.2e %s\n",
+                    name, order, on_dev ? "OK" : "FAIL", bw_d, bw_ok ? "OK" : "FAIL",
+                    fw_d, fw_ok ? "OK" : "FAIL")
+            all_ok &= on_dev & bw_ok & fw_ok
+            @testset "$name ($order)" begin
+                @test on_dev            # the refilled payoff buffer lands on the device
+                @test bw_ok             # backward matches the CPU reference (tight)
+                @test fw_ok             # forward matches the CPU reference (tight)
+            end
+        end
+    end
+    @testset "GPU device residency (every relocated array is a CuArray)" begin
+        # The walker in `test/device_walk.jl` visits exactly what the relocation visits, so a type
+        # with no rebuild rule shows up here as a host-resident array inside a relocated stage.
+        for (name, build) in RESIDENCY_CASES
+            stage   = first(build())
+            arrays  = reachable_arrays(gpu_stage(stage))
+            on_host = count(a -> !(a isa CuArray), arrays)
+            @printf("%-38s arrays=%3d   host-resident=%d %s\n",
+                    name, length(arrays), on_host, on_host == 0 ? "OK" : "FAIL")
+            all_ok &= (on_host == 0) & !isempty(arrays)
+            @testset "$name" begin
+                @test !isempty(arrays)  # the walk reaches the stage's buffers at all
+                @test on_host == 0      # every one of them is device-resident
             end
         end
     end

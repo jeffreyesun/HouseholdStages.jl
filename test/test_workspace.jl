@@ -2,9 +2,9 @@ using Test
 using HouseholdStages
 
 @testset "allocate — MarkovStage holds its self-describing kernel array directly" begin
-    # A modern MarkovStage stores its kernel — the self-describing transition array (a
-    # `PermutedDimsArray` over the compact parent) — directly in `.kernel`; the
-    # backward/forward output buffers live in `.scratch` (`V_start`/`Λ_end`), no wrapper.
+    # A MarkovStage stores its kernel — a `DenseKernel` over the compact
+    # `(n_out, n_in, dep…)` `MatrixField` — directly in `.kernel`; the backward/forward output
+    # buffers live in `.scratch` (`V_start`/`Λ_end`), no wrapper.
     P = [0.9 0.1; 0.2 0.8]
     layout = GriddedLayout(
         :wealth => GriddedContinuous([0.0, 1.0, 2.0]),
@@ -19,10 +19,10 @@ end
 @testset "allocate — ArgmaxStage holds its single-destination kernel" begin
     layout = GriddedLayout(:s => Discrete([:A, :B]))
     stage = ArgmaxStage(layout; axis = :s, reward = [0.0 0.0; 1.0 1.0])
-    # A modern ArgmaxStage holds its `ScatterKernel` (discrete axis) directly in `.kernel`; the
+    # An ArgmaxStage holds its `ScatterKernel` (discrete axis) directly in `.kernel`; the
     # integer per-cell destination lives on the kernel (the AD lift reads it there too). The
     # backward/forward output buffers (`V_start`/`Λ_end`) live in `.scratch`.
-    @test stage isa HouseholdStages.AbstractModernStage
+    @test stage isa HouseholdStages.AbstractPrimitiveStage
     @test stage.kernel isa HouseholdStages.ScatterKernel
     @test policy(stage) isa Array{Int}
     @test hasproperty(stage.scratch, :V_start)
@@ -38,10 +38,10 @@ end
         cost_matrix = [0.0 0.5; 0.5 0.0],
         ε           = 0.5,
     )
-    # Modern stage: no `Operator`/reward; the kernel IS a `LogitChoiceKernel` carrying the
-    # factored pieces. eψC is the dense (n, n) exp(−C/ε) kernel; value_weight/normalizer are
-    # full layout-shaped — here just (n,), since the layout is the choice axis only.
-    @test stage isa HouseholdStages.AbstractModernStage
+    # The kernel IS a `LogitChoiceKernel` carrying the factored pieces. eψC is the dense
+    # `(n_end, n_start)` exp(−Cᵀ/ε) kernel; value_weight/normalizer are full layout-shaped — here just (n,), since the
+    # layout is the choice axis only.
+    @test stage isa HouseholdStages.AbstractPrimitiveStage
     @test stage.kernel isa HouseholdStages.LogitChoiceKernel
     @test stage.kernel.eψC isa HouseholdStages.DenseKernel
     @test size(parent(stage.kernel.eψC)) == (2, 2)
@@ -59,7 +59,7 @@ end
     # ForgetfulSum is now a `MarkovStage(ones(4,1))`: a ones-row marginalising self-describing array,
     # compact parent ones(1, n_forget) (n_out = 1, n_in = n_forget = 4). The Markov fills its kernel
     # in `backward!`, so the ones appear after a sweep (the allocation is zeros).
-    @test stage isa HouseholdStages.AbstractModernStage
+    @test stage isa HouseholdStages.AbstractPrimitiveStage
     @test stage.kernel isa HouseholdStages.DenseKernel
     @test (size(parent(stage.kernel), 1), size(parent(stage.kernel), 2)) == (1, 4)
     backward!(stage, zeros(3, 1), nothing)
@@ -77,7 +77,7 @@ end
     chain = s1 ∘ s2
     @test chain.buffer.stages isa Tuple
     @test length(chain.buffer.stages) == 2
-    # `chain.buffer.stages` now holds bundled sub-STAGES. Both are modern
+    # `chain.buffer.stages` holds bundled sub-STAGES. Both are
     # MarkovStages: each carries its self-describing kernel array in `.kernel` and its
     # output buffers in `.scratch` (V_start/Λ_end).
     @test chain.buffer.stages[1] isa MarkovStage

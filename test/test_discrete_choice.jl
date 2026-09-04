@@ -27,11 +27,10 @@ end
     @test policy(stage)[1] == 1
 end
 
-# Modern argmax: backward computes `V_start = max_a Q` directly (no stored reward).
-# The decomposition identity still holds — we recompute the flow-at-argmax
-# `r[s] = R[s, σ(s)]` inline and assert (a) the affine split V_start = r + Kᵀ·V_out,
-# where Kᵀ·V_out is the kernel's `backward!` (gather through the policy), and (b) the
-# forward push equals the kernel's `forward!` scatter.
+# Backward computes `V_start = max_a Q` straight off the reward field, so the flow-at-argmax
+# `r[s] = R[s, σ(s)]` is recomputed inline here to assert (a) the affine split
+# `V_start = r + Kᵀ·V_end`, where `Kᵀ·V_end` is the kernel's `backward!` (gather through the
+# policy), and (b) that the forward push equals the kernel's `forward!` scatter.
 @testset "ArgmaxStage — flow-at-argmax decomposition + transition duality" begin
     # Multi-dim layout so the choice axis is not first and the off-choice state
     # varies — exercises the per-cell scatter/gather, not a trivial 1-D case.
@@ -80,7 +79,8 @@ end
     # Collapse :θ (size 3) by max with a passive :s axis; a `before`-singleton reward column.
     layout = GriddedLayout(:θ => Discrete([10.0, 20.0, 30.0]),
                            :s => Discrete([1.0, 2.0]))
-    stage = ArgmaxStage(layout; axis = :θ, reward = zeros(3, 1))   # (after = 3, before = 1)
+    stage = ArgmaxStage(resize_axis(layout, :θ, 1), layout;
+                        axis = :θ, reward = zeros(3, 1))   # (after = 3, before = 1)
     # Input collapses θ to size 1; output keeps it full.
     @test size(stage.scratch.V_start, 1) == 1
     @test size(stage.scratch.Λ_end, 1) == 3
@@ -99,19 +99,15 @@ end
     @test sum(Λ_end .* V_end) ≈ sum(Λ_start .* V_start) atol = 1e-12
 
     # A non-trivial reward (a −c(θ) column) shifts the argmax: penalise θ = 3.
-    stage2 = ArgmaxStage(layout; axis = :θ, reward = reshape([0.0, 0.0, -100.0], 3, 1))
+    stage2 = ArgmaxStage(resize_axis(layout, :θ, 1), layout;
+                         axis = :θ, reward = reshape([0.0, 0.0, -100.0], 3, 1))
     V2 = copy(backward!(stage2, V_end, nothing))
     @test vec(policy(stage2)) == [2, 2]
     @test vec(V2) == [23.0, 21.0]
 end
 
-# Recompute the per-origin choice probabilities from a solved kernel.
-# These layouts are the choice axis only, so the non-choice column is s = 1:
-#     P(j | origin i) = eψC[i,j] · W[j,1] / res[i,1].
-function _logit_prob(stage, n)
-    k = stage.kernel
-    return [parent(k.eψC)[i, j] * k.value_weight[j, 1] / k.normalizer[i, 1] for i in 1:n, j in 1:n]
-end
+# These layouts are the choice axis only, so `choice_probabilities` is the `(origin, dest)` matrix
+# `P[i, j] = P(j | origin i)`.
 
 @testset "LogitChoiceStage — transition-cost logit, V_end tilts choice" begin
     # Zero cost matrix + V_end[2] = 1 gives destination 2 a +1 advantage
@@ -130,7 +126,7 @@ end
     @test V_start[1] ≈ expected
     @test V_start[2] ≈ expected
 
-    P = _logit_prob(stage, 2)
+    P = choice_probabilities(stage)
     @test sum(P[1, :]) ≈ 1.0
     @test P[1, 2] > P[1, 1]      # the higher V_end favours destination 2
 
@@ -156,7 +152,7 @@ end
         @test V_pre[i] ≈ log(sum(exp(-C[i, j] + V_end[j]) for j in 1:2)) atol = 1e-12
     end
 
-    P = _logit_prob(stage, 2)
+    P = choice_probabilities(stage)
     @test all(sum(P; dims = 2) .≈ 1.0)
     # Origin 1 pays a cost to reach destination 2; origin 2 does not.
     @test P[2, 2] > P[1, 2]
@@ -173,7 +169,7 @@ end
     V_start_sharp = copy(backward!(stage, Float64[0.0, 1.0], nothing))
     @test V_start_sharp[1] ≈ 1.0 atol = 0.05    # → max payoff
 
-    P = _logit_prob(stage, 2)
+    P = choice_probabilities(stage)
     for i in 1:2
         @test P[i, 2] > 0.999
         @test P[i, 1] < 1e-3
@@ -200,7 +196,7 @@ end
 end
 
 # Gibbs option-value separation + LSE identity.
-# The modern logit computes V_in = ε·log Σ_j exp((−C[i,j] + V_out[j,s])/ε) (the
+# The logit computes V_in = ε·log Σ_j exp((−C[i,j] + V_out[j,s])/ε) (the
 # LSE) directly — no stored Gibbs reward. But the option-value decomposition
 # V_in = r + Kᵀ·V_out still holds, with the Gibbs reward r = E_π[−C] + ε·H(π)
 # RECOVERED as r = V_in − Kᵀ·V_out (the factored pull through the seated kernel).
@@ -233,13 +229,11 @@ end
     # `backward!(stage, …)` above seated the kernel; `forward_adjoint!` is its frozen-kernel
     # Kᵀ pull, Kᵀ·V_out = Σ_j π(j|i,s)·V_out[j,s], factored over the dep batch.
     KtV = forward_adjoint!(stage, V_out)
-    r = V_in .- KtV                              # (w, a) over the input layout
+    r = V_in .- KtV                              # (w, a) over the start layout
 
-    # The policy π (choice axis = dim 2) for the independent Gibbs value. eψC's compact
-    # parent is (origin, dest); value_weight/normalizer are layout-shaped (w = s, a = choice).
-    k = stage.kernel
-    eC = reshape(parent(k.eψC), n, n)
-    π = [eC[i, j] * k.value_weight[s, j] / k.normalizer[s, i] for s in 1:3, i in 1:n, j in 1:n]  # π[s,i,j]
+    # The policy π for the independent Gibbs value, over the (w, a) start layout with the
+    # destination appended: π[s, i, j].
+    π = choice_probabilities(stage)
 
     # (b) r = V_in − Kᵀ·V_out matches the independent Gibbs value E_π[−C] + εH(π).
     H      = [-sum(π[s, i, j] * log(π[s, i, j]) for j in 1:n) for s in 1:3, i in 1:n]
@@ -264,7 +258,7 @@ end
     )
     n = 3
     C = [0.0 0.4 0.9; 0.4 0.0 0.5; 0.9 0.5 0.0]
-    u = [0.0, 0.2, -0.1]                              # the old amenity vector
+    u = [0.0, 0.2, -0.1]                              # the destination amenity
     ε = 0.7
 
     # u depends only on the destination index (the choice axis), so the
@@ -283,10 +277,8 @@ end
     @test V_in ≈ LSE atol = 1e-12
 
     # The logit's stored policy is the amenity-shifted softmax over (u + V_out).
-    # ChainStage is `logit ∘ utility`, so the logit sub-stage is stages[1] (modern).
-    k = stage.buffer.stages[1].kernel
-    eC = reshape(parent(k.eψC), n, n)
-    π = [eC[i, j] * k.value_weight[s, j] / k.normalizer[s, i] for s in 1:3, i in 1:n, j in 1:n]
+    # ChainStage is `logit ∘ utility`, so the logit sub-stage is stages[1].
+    π = choice_probabilities(stage.buffer.stages[1])
     for s in 1:3, i in 1:n
         denom = sum(exp((-C[i, jj] + u[jj] + V_out[s, jj]) / ε) for jj in 1:n)
         for j in 1:n
@@ -312,7 +304,8 @@ end
     W = Float64[1.0, 5.0]
     for θ in (1.0, 0.1)
         ε = -θ
-        # Encode the prior K as the Gibbs neg-log-prior cost C = −ε·log K, so eψC = exp(−C/ε) = K.
+        # Encode the prior K as the Gibbs neg-log-prior cost C = −ε·log K, so the choice weights
+        # exp(−C[i,j]/ε) are K[i,j].
         stage = LogitChoiceStage(layout; axis = :a, cost_matrix = -ε .* log.(K), ε = ε)
         V = copy(backward!(stage, W, nothing))
         analytic = [-θ * log(sum(K[i, j] * exp(-W[j] / θ) for j in 1:2)) for i in 1:2]
@@ -331,7 +324,8 @@ end
 @testset "LogitChoiceStage — rectangular origin=1 (logsumexp-collapse: primal + adjoint)" begin
     layout = GriddedLayout(:θ => Discrete([1, 2, 3]), :s => Discrete([1.0, 2.0]))
     ε = 0.7
-    stage = LogitChoiceStage(layout; axis = :θ, cost_matrix = zeros(1, 3), ε = ε)
+    stage = LogitChoiceStage(resize_axis(layout, :θ, 1), layout;
+                             axis = :θ, cost_matrix = zeros(1, 3), ε = ε)
     @test size(stage.scratch.V_start, 1) == 1 && size(stage.scratch.Λ_end, 1) == 3
 
     V_end = Float64[1 4; 3 2; 2 5]
@@ -347,4 +341,76 @@ end
     fa = forward_adjoint!(stage, dΛ_end); ba = backward_adjoint!(stage, dV_start)
     @test size(fa) == (1, 2) && size(ba) == (3, 2)
     @test sum(dΛ_end .* ba) ≈ sum(fa .* dV_start) atol = 1e-12
+end
+
+# The stored fiber's ORIENTATION, stated once. The fill's size assert validates its SHAPE, but at
+# `n_start == n_end` a transposed cost passes every shape check — and passes every test whose cost
+# is symmetric or zero. So the proposition needs an ASYMMETRIC literal cost to have any content,
+# and it is the one place the tree says which way round `eψC` sits.
+@testset "LogitChoiceStage — eψC is stored as exp(−Cᵀ/ε) (asymmetric cost)" begin
+    layout = GriddedLayout(:a => Discrete([1, 2, 3]))
+    C = [0.0 0.7 1.9;                          # C[i, j] ≠ C[j, i] at every off-diagonal entry
+         0.2 0.0 0.4;
+         1.1 0.3 0.0]
+    ε = 0.6
+    stage = LogitChoiceStage(layout; axis = :a, cost_matrix = C, ε = ε)
+    V_end = Float64[0.3, -0.2, 0.8]
+    backward!(stage, V_end, nothing)
+
+    @test parent(stage.kernel.eψC) ≈ permutedims(exp.(.- C ./ ε))
+    @test !(parent(stage.kernel.eψC) ≈ exp.(.- C ./ ε))     # the transpose is not a no-op here
+
+    # `choice_probabilities` reads that orientation: π(j|i) ∝ exp((−C[i,j] + V_end[j])/ε).
+    P = choice_probabilities(stage)
+    @test size(P) == (3, 3)
+    for i in 1:3
+        denom = sum(exp((-C[i, jj] + V_end[jj]) / ε) for jj in 1:3)
+        for j in 1:3
+            @test P[i, j] ≈ exp((-C[i, j] + V_end[j]) / ε) / denom atol = 1e-12
+        end
+    end
+end
+
+@testset "choice_probabilities — dep-varying asymmetric cost, leading operative axis" begin
+    # The operative axis leads and the cost varies along the trailing dep, so the join over the
+    # compact `(dest, origin, dep)` fiber and the full layout-shaped buffers is non-trivial in
+    # both index positions.
+    layout = GriddedLayout(:a => Discrete([1, 2, 3]), :z => Discrete([:lo, :hi]))
+    Clo = [0.0 0.7 1.9; 0.2 0.0 0.4; 1.1 0.3 0.0]
+    Chi = [0.0 0.1 2.5; 1.3 0.0 0.6; 0.4 1.7 0.0]
+    cost(; z) = z == :lo ? Clo : Chi
+    ε = 0.8
+    stage = LogitChoiceStage(layout; axis = :a, cost_matrix = cost, ε = ε)
+    V_end = [0.1 * i + (z == 1 ? 0.0 : 0.5) for i in 1:3, z in 1:2]
+    backward!(stage, V_end, NamedTuple())
+
+    P = choice_probabilities(stage)
+    @test size(P) == (3, 2, 3)                              # (origin a, dep z, dest a)
+    for (zi, Cz) in ((1, Clo), (2, Chi)), i in 1:3
+        denom = sum(exp((-Cz[i, jj] + V_end[jj, zi]) / ε) for jj in 1:3)
+        for j in 1:3
+            @test P[i, zi, j] ≈ exp((-Cz[i, j] + V_end[j, zi]) / ε) / denom atol = 1e-12
+        end
+        @test sum(P[i, zi, :]) ≈ 1.0 atol = 1e-12
+    end
+end
+
+@testset "choice_probabilities — rectangular 1 → n origin collapse" begin
+    layout = GriddedLayout(:θ => Discrete([1, 2, 3]), :s => Discrete([1.0, 2.0]))
+    ε = 0.7
+    stage = LogitChoiceStage(resize_axis(layout, :θ, 1), layout;
+                             axis = :θ, cost_matrix = [0.0 0.5 1.25], ε = ε)
+    V_end = Float64[1 4; 3 2; 2 5]
+    backward!(stage, V_end, nothing)
+
+    C = [0.0, 0.5, 1.25]
+    P = choice_probabilities(stage)
+    @test size(P) == (1, 2, 3)                              # start layout (1, 2), dest appended
+    for s in 1:2
+        denom = sum(exp((-C[jj] + V_end[jj, s]) / ε) for jj in 1:3)
+        for j in 1:3
+            @test P[1, s, j] ≈ exp((-C[j] + V_end[j, s]) / ε) / denom atol = 1e-12
+        end
+        @test sum(P[1, s, :]) ≈ 1.0 atol = 1e-12
+    end
 end

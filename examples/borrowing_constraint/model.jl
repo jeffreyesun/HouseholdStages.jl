@@ -30,24 +30,13 @@
 # Fixed-`r` partial equilibrium: a single inner V/Λ solve per economy.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# DOGFOODING FINDING — `BorrowingConstraintStage` is unusable in the VFI loop.
-#
-# The natural API choice for a STATE-DEPENDENT limit (e.g. the per-income natural
-# limit `a ≥ −y/r`, or the solvency bounds in `examples/limited_commitment`) is
-# `BorrowingConstraintStage(infeasible = (; wealth, income, env) -> …)`, which
-# masks infeasible cells with `−Inf` flow utility. But the VFI fixed-point loop
-# (`src/outer_loop/outer_loop_internal.jl`) measures convergence with
-#
-#     diff = maximum(abs, V_new .- V)
-#
-# and once a cell holds a steady `−Inf`, `V_new − V = −Inf − (−Inf) = NaN`, so
-# `maximum(abs, …) = NaN` and `while diff > tol` is `NaN > tol = false`: the
-# iteration TERMINATES after 2 passes with an unconverged V. The savings policy
-# is then garbage and the stationary Λ collapses onto the masked cells. A second
-# obstruction: with CRRA the natural limit is the `c → 0` boundary, so any grid
-# cell BELOW it is infeasible-to-sustain — a trap that absorbs mass. Both issues
-# are in `src/` (off-limits here). `examples/limited_commitment` shows the
-# within-constraints workaround: a `UtilityStage` with a FINITE penalty.
+# WHY GRID FLOORS RATHER THAN A `-Inf` MASK. With CRRA the natural limit is the
+# `c → 0` boundary, so `c ≥ 0` feasibility already enforces it — and any grid
+# cell strictly BELOW the natural limit is infeasible-to-sustain, an absorbing
+# trap for mass. Setting the grid floor at (or inside) the limit keeps every
+# cell sustainable with no masking machinery at all. A hard `-Inf` gate
+# (`BorrowingConstraintStage`) is the tool for genuinely inadmissible cells —
+# see `examples/mortgage_refinancing`'s LTV cap.
 # ─────────────────────────────────────────────────────────────────────────────
 
 using HouseholdStages
@@ -118,7 +107,7 @@ function borrowing_constraint_household(a_min::Real, p = borrowing_constraint_pa
     )
     savings = ConsumptionSavingsStage(layout;
         β       = p.β,
-        utility = (cell, c; env) -> u_crra(c, Val(p.σ)),
+        utility = (cell, c) -> u_crra(c, Val(p.σ)),
         axis    = :wealth,
     )
 
